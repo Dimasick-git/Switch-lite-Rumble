@@ -161,7 +161,7 @@ audio-triggered approximation. That's the differentiator.
 
 | Tool | Use | Link |
 | :--- | :--- | :--- |
-| **nxdumptool** | Dump XCI / InitialData / CardIdSet / certificates from real gamecards — invaluable for studying real card data | https://github.com/DarkMatterCore/nxdumptool |
+| **nxdumptool** | Dump XCI / InitialData / CardIdSet / certificates from real gamecards. Talks to the card via the **legit FS API** (`fsOpenGameCardStorage`, `fsDeviceOperator*`), parses CardId maker codes (MegaChips 0xC2, Lapis 0xAE…), and even dumps the **Lotus ASIC firmware (LAFW)** from RAM. The clearest real-world map of the FS↔gamecard path. **GPL-3.0 — same as this repo**, so patterns are reusable with attribution | https://github.com/DarkMatterCore/nxdumptool |
 | **gcdumptool** | Older gamecard dump tool (XCI + cert handling) | https://github.com/DDinghoya/gcdumptool |
 | **kicad-boardview** | The KiCad plugin used to generate the `.bvr`/`.obdata` boardviews in `hardware/` | https://github.com/whitequark/kicad-boardview |
 | **OpenBoardView** | Free viewer for the `.bvr` boardview files | https://github.com/OpenBoardView/OpenBoardView |
