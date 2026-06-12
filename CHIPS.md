@@ -84,15 +84,24 @@ AES-128-CTR. Beating or bypassing Lotus3 is the central reverse-engineering prob
 
 This block must respond to Lotus3's clocked 8-bit protocol in real time. An FPGA
 or CPLD is the realistic choice because the timing is tight and the protocol is
-custom. This is also exactly the approach the **MIG Switch** flashcart uses: a
-low-cost FPGA emulates the gamecard LSI, managed by a small MCU. (TX scratched the
-chip markings and encrypted the firmware to slow reverse engineering.)
+custom. This is also exactly the approach the **MIG Switch** flashcart uses: an
+FPGA emulates the gamecard LSI, managed by a small MCU. (Chip markings were
+scratched and firmware encrypted to slow reverse engineering.)
+
+> **Confirmed part (team teardown):** a MIG Switch unit was opened and its main FPGA
+> is a **Microsemi/Microchip IGLOO2 M2GL010** (the larger sibling **M2GL025** also
+> exists), with an **ESP32-S3** as the helper MCU (microSD, firmware update, loading
+> the FPGA bitstream at boot). This **corrects** the earlier assumption that MIG uses
+> an iCE40 — see [`RESEARCH.md`](./RESEARCH.md). The iCE40 options below remain valid
+> *candidates* for our own from-scratch board (smaller, fully open toolchain); IGLOO2
+> is listed because it's the proven-working reference part.
 
 | Chip | Package / size | Why it fits | Watch-outs |
 | :--- | :--- | :--- | :--- |
-| **Lattice iCE40 UltraLite (UL1K)** | 16-ball WLCSP, **1.4 × 1.4 mm**, 0.35 mm pitch | Among the smallest FPGAs in existence; trivially fits the envelope; ultra-low power; open toolchain (IceStorm/yosys/nextpnr) | Limited LUTs — emulation logic must be lean |
+| **Microsemi IGLOO2 M2GL010** (MIG's actual FPGA) | smallest is TQ144 (0.5 mm pitch) or FCS BGA (0.5 mm pitch); ~6,060 logic elements | **Proven** to work as a gamecard emulator in MIG; flash-based (no config chip needed) | Larger packages than iCE40; proprietary Libero toolchain; markings scrubbed on units |
+| **Microsemi IGLOO2 M2GL025** | BGA/TQ, ~12,084 logic elements | More headroom; same proven family | Bigger die/package; same toolchain caveat |
+| **Lattice iCE40 UltraLite (UL1K)** | 16-ball WLCSP, **1.4 × 1.4 mm**, 0.35 mm pitch | Among the smallest FPGAs in existence; trivially fits the envelope; ultra-low power; open toolchain (IceStorm/yosys/nextpnr) | Limited LUTs — emulation logic must be lean; not yet proven on this protocol |
 | **Lattice iCE40 UltraPlus (UP5K)** | QFN-48 7 × 7 mm, or WLCSP ~2.1 × 2.5 mm | More logic + RAM headroom for the protocol state machine; open toolchain | QFN body is large for the slot — prefer the CSP |
-| **Lattice iCE40 LP/HX series** | CSP/QFN, 1.4–7 mm | The family MIG-class carts are believed to use | Markings often scrubbed on commercial units |
 
 **Recommendation:** start prototyping on a UP5K dev board (room to breathe), then
 target the **iCE40 UltraLite WLCSP** for the production-size card. Native 1.8 V I/O
@@ -101,13 +110,17 @@ banks line up perfectly with the slot's logic level.
 ### 4.2 Management MCU (config, USB/SD, vibration decode)
 
 Loads the FPGA bitstream, handles the decoded vibration stream, and does general
-housekeeping. The MIG Switch pairs an **ESP32** with its FPGA over SPI for exactly
-this.
+housekeeping. The MIG Switch pairs an **ESP32-S3** with its FPGA for exactly this
+(microSD, firmware update, loading the bitstream at boot). For a *rumble-only*
+board, much of that MIG workload (microSD, file catalogs, USB mass storage) is
+unnecessary — an open question is whether we need a helper MCU at all, or whether
+the FPGA alone suffices.
 
 | Chip | Package / size | Notes |
 | :--- | :--- | :--- |
-| **ESP32-C3** | QFN, ~5 × 5 mm | Single RISC-V core, BLE — wireless config without extra pins; same lineage as MIG's ESP32 |
-| **ESP32 (classic)** | QFN 5 × 5 / 6 × 6 mm | Proven in MIG; 6 mm body is tight but feasible |
+| **ESP32-S3** | QFN, ~7 × 7 mm | The exact part MIG uses; USB + BT; well-documented (DFU flashing over USB-CDC) |
+| **ESP32-C3** | QFN, ~5 × 5 mm | Single RISC-V core, BLE — wireless config without extra pins; cheap and everywhere |
+| **ESP32 (classic)** | QFN 5 × 5 / 6 × 6 mm | Same family; 6 mm body is tight but feasible |
 | **RP2040** | QFN-56, **7 × 7 mm** | Cheap, great PIO for bit-banging the bus, dual M0+; but 7 mm is borderline for the envelope and it needs external flash |
 | **STM32 (C0/G0 in WLCSP)** | WLCSP ~2–3 mm | Smallest footprint option if BLE isn't needed |
 
@@ -130,13 +143,21 @@ slot's current limit).
 
 ### 4.4 Actuator (the thing that actually buzzes)
 
+- **iPhone 12 Taptic Engine** (team's preferred candidate) — a high-quality linear
+  actuator; strong but controllable, capable of HD-rumble-like feel. Thin enough
+  that it has been fitted between the board and the shell of a Switch Lite; widely
+  available (e.g. AliExpress) as a repair part. Best feel-for-size of the options.
 - **LRA (Linear Resonant Actuator)** — flat coin types ~8–10 mm diameter, low
-  profile, sharp/precise feel, resonance-tuned (pairs with DRV2605L). Best fit for
-  the thin envelope.
+  profile, sharp/precise feel, resonance-tuned (pairs with DRV2605L). Good generic
+  fit for the thin envelope.
 - **Small ERM** — cheaper, "rumblier", but bulkier and slower to spin up; harder to
   fit in <3 mm.
 
-**Recommendation:** a low-profile **coin LRA**, driven on-resonance by the DRV2605L.
+**Recommendation:** target the **iPhone 12 Taptic Engine** for the real feel the
+project wants; prototype/fallback with a **coin LRA** driven on-resonance by the
+DRV2605L. Note the cartridge shell can be **extended upward** (only the bottom must
+stay stock), so actuator height is less constrained than the 2.1 mm card thickness
+implies.
 
 ### 4.5 Power buffer (non-negotiable)
 

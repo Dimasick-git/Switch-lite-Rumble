@@ -208,8 +208,11 @@ Pulling the threads together:
 
 - Read the full **Switch Cartridge - Reverse Engineering** thread page-by-page for
   logic-analyzer captures and timing numbers (search summaries don't capture these).
-- Find the exact **iCE40 part** MIG uses (markings scratched) — would shortcut FPGA
-  selection.
+- ~~Find the exact FPGA part MIG uses (markings scratched).~~ **Resolved by team
+  teardown:** MIG's main FPGA is a **Microsemi/Microchip IGLOO2 M2GL010** (variant
+  **M2GL025**), helper MCU **ESP32-S3** — *not* an iCE40 as earlier search summaries
+  implied. See [`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md) §4 and
+  [`CHIPS.md`](./CHIPS.md) §4.1.
 - Confirm whether FS's power-gating-on-auth-failure has a **hardware timeout** in
   Lotus3 that a software patch can't override.
 - Look for anyone who has actually driven the **DAT lines as UART/SPI** with the

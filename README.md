@@ -25,6 +25,7 @@ selection, the power math, and the open problems that still need solving.
 | File | What it covers |
 | :--- | :--- |
 | [`README.md`](./README.md) | Project overview + the full technical specification (interception, bypass, power, data channel, feasibility) |
+| [`docs/`](./docs/) | Working design docs + the **decision log** ([`DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md)): the two architectures debated (external sysmodule dongle vs. in-slot cartridge emulation), what was agreed as the first step, and the team's technical findings |
 | [`CHIPS.md`](./CHIPS.md) | Hardware reference: game card physical envelope, 17-pin pinout, Lotus3, and concrete candidate chips (FPGA, MCU, haptic driver, actuator, power buffer) that fit the size constraint — with sources |
 | [`RESEARCH.md`](./RESEARCH.md) | Annotated link archive + findings: Lotus3 deep dive, every relevant GBAtemp thread, MIG prior art, the HID/vibration software path, dumping tools, crypto/keys, and what it all means for this project |
 | [`hardware/`](./hardware/) | PCB design files and references. Currently the **MIG Dumper & Flashcart** KiCad projects, schematics, boardviews and BOMs (prior art, original by [sabogalc](https://github.com/sabogalc/MIG-Flash-PCBs), WTFPL) — the closest existing slot-fit, Lotus3-speaking boards |
@@ -56,9 +57,25 @@ selection, the power math, and the open problems that still need solving.
 
 ## Status
 
-**Research / pre-prototype.** No hardware has been built yet. The biggest unknowns
-are the Lotus3 authentication sequence and whether power can be held up via a
-software `fs-srv` patch — see the open questions in [`CHIPS.md`](./CHIPS.md#6-open-questions--help-wanted).
+**Research / pre-prototype.** No hardware has been built yet.
+
+Two architectures are on the table (full discussion in
+[`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md)):
+
+1. **External / sysmodule dongle (agreed first step).** A custom Atmosphère
+   sysmodule taps the live rumble values in `hid` and forwards them over USB-C /
+   Bluetooth to an external actuator. No game-card slot involved, no protections
+   touched — clean, legal, and testable today. This is where the work starts.
+2. **In-slot cartridge emulation (deferred).** A MIG-style cartridge that lives in
+   the slot. Elegant, but it depends on getting power past the Lotus3
+   authentication, which overlaps with copy-protection circumvention — so it's
+   parked, not pursued, until a power path exists that doesn't touch content
+   protection.
+
+The biggest open unknowns are where exactly to tap vibration in `hid`, channel
+latency, and the HD-rumble→actuator mapping — see the open questions in
+[`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md#9-открытые-вопросы-что-реверсить-дальше)
+and [`CHIPS.md`](./CHIPS.md).
 
 ---
 
