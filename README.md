@@ -26,6 +26,7 @@ selection, the power math, and the open problems that still need solving.
 | :--- | :--- |
 | [`README.md`](./README.md) | Project overview + the full technical specification (interception, bypass, power, data channel, feasibility) |
 | [`CHIPS.md`](./CHIPS.md) | Hardware reference: game card physical envelope, 17-pin pinout, Lotus3, and concrete candidate chips (FPGA, MCU, haptic driver, actuator, power buffer) that fit the size constraint — with sources |
+| [`RESEARCH.md`](./RESEARCH.md) | Annotated link archive + findings: Lotus3 deep dive, every relevant GBAtemp thread, MIG prior art, the HID/vibration software path, dumping tools, crypto/keys, and what it all means for this project |
 | [`hardware/`](./hardware/) | PCB design files and references. Currently the **MIG Dumper & Flashcart** KiCad projects, schematics, boardviews and BOMs (prior art, original by [sabogalc](https://github.com/sabogalc/MIG-Flash-PCBs), WTFPL) — the closest existing slot-fit, Lotus3-speaking boards |
 | [`LICENSE`](./LICENSE) | GPL-3.0 full text |
 
@@ -48,6 +49,10 @@ selection, the power math, and the open problems that still need solving.
   schematics, boardviews and BOMs, imported and cleaned up in
   [`hardware/`](./hardware/). The Flashcart confirms a real-world slot-fit form
   factor: a 0.8 mm ENIG board with 0201 passives speaking the Lotus3 protocol.
+- **Lotus3 internals** — the gamecard ASIC is a Cortex-M3 with 4 KB ROM / 42 KB
+  SRAM, a hardware RNG, and an RSA-OAEP + AES-128 challenge-response auth chain;
+  it bridges the Tegra (eMMC/SDMMC2 vendor commands) to the card. Full breakdown
+  and every source/discussion thread is collected in [`RESEARCH.md`](./RESEARCH.md).
 
 ## Status
 
