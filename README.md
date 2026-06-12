@@ -9,6 +9,49 @@
 
 ---
 
+## What this project is
+
+An open research effort to add **tactile feedback (Rumble)** to the **Nintendo
+Switch Lite** — which has no built-in HD Rumble — by building a module that plugs
+into the **game card slot**. The slot is the only spare port on the Lite, so the
+challenge is getting both **power** and **vibration data** out of it past Nintendo's
+protections.
+
+This repo is the knowledge base for that effort: the protocol research, the chip
+selection, the power math, and the open problems that still need solving.
+
+## What's in this repo
+
+| File | What it covers |
+| :--- | :--- |
+| [`README.md`](./README.md) | Project overview + the full technical specification (interception, bypass, power, data channel, feasibility) |
+| [`CHIPS.md`](./CHIPS.md) | Hardware reference: game card physical envelope, 17-pin pinout, Lotus3, and concrete candidate chips (FPGA, MCU, haptic driver, actuator, power buffer) that fit the size constraint — with sources |
+| [`LICENSE`](./LICENSE) | GPL-3.0 full text |
+
+## Information collected so far
+
+- **Physical envelope** of the Switch game card (~21 × 31 × 3 mm) and what that
+  means for component packages — see [`CHIPS.md`](./CHIPS.md).
+- **Full 17-pin slot pinout**, logic levels (1.8 V), and the 3.1 V / 1.8 V power
+  budget, sourced from switchbrew.
+- **Lotus3 ASIC** behaviour: power sequencing, header read, challenge-response, and
+  the power-gating-on-failure that we have to defeat.
+- **MIG Switch architecture** as prior art: a low-cost iCE40 FPGA emulating the
+  gamecard LSI, managed by an ESP32 — confirming the approach is viable.
+- **Concrete part candidates** sized to the envelope: Lattice iCE40 UltraLite
+  (1.4 × 1.4 mm WLCSP), ESP32-C3, TI DRV2605L haptic driver (1.5 × 1.5 mm), coin
+  LRA, and a supercapacitor power buffer.
+- **The HID interception path** (MITM on the `hid` service via Atmosphere) for
+  capturing the games' vibration values — see the spec below.
+
+## Status
+
+**Research / pre-prototype.** No hardware has been built yet. The biggest unknowns
+are the Lotus3 authentication sequence and whether power can be held up via a
+software `fs-srv` patch — see the open questions in [`CHIPS.md`](./CHIPS.md#6-open-questions--help-wanted).
+
+---
+
 # Technical Specification: Rumble mod for Switch Lite through the game card slot
 
 This document describes the deep technical implementation of a tactile feedback (Rumble) module connected via the game card slot. The main focus is on methods to bypass system limitations to provide power and data transfer.
