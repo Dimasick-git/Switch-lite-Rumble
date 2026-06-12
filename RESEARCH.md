@@ -219,3 +219,63 @@ Pulling the threads together:
   stock gamecard driver disabled.
 - Investigate the **Lotus3→eMMC swap** thread's conclusions for an alternate power
   story.
+
+---
+
+## 12. Additional technical findings (round 2)
+
+### 12.1 Game send rumble even on a Lite — but the built-in pad has no motor
+- The Switch Lite's **integrated controller has no vibration device**. Games still
+  send rumble through the standard **HID npad** protocol; only external wireless
+  Joy-Con / Pro Controllers physically vibrate.
+- **Implication for our capture point:** the live signal exists in `hid`, but it may
+  be addressed to a paired controller's npad, not the handheld one. Open empirical
+  question (**resolves DESIGN-NOTES open Q2**): does a game call
+  `hidInitializeVibrationDevices(Handheld)` and `SendVibrationValues` for the
+  built-in handheld npad even though it has no motor? If yes, the MITM taps it
+  directly. If no, we likely must **register a virtual controller** so the game has a
+  vibration-capable target to send to. **Must be tested on hardware.**
+
+### 12.2 Data transport off the console (no slot needed)
+- **USB-C (device mode):** libnx `usb_comms` (`usbCommsInitialize` /
+  `usbCommsRead/Write`) lets a sysmodule push bytes over USB-C to a host. Proven by
+  Tinfoil. Lowest latency, but the cable occupies the only port and implies a
+  tethered/host topology.
+- **Bluetooth:** the cleaner "dongle" channel, but the Switch's BT stack is busy with
+  controllers; a custom BLE peripheral link from a sysmodule is more involved than
+  USB. MissionControl shows BT MITM is feasible under Atmosphère.
+- First milestone can sidestep both with a wired/GPIO/UART-style debug output; pick
+  USB-C vs BT after measuring latency (DESIGN-NOTES Q3).
+
+### 12.3 Gamecard bus timing (for the deferred slot path)
+- **CLK = 25 MHz**, 8-bit bus, data captured on the rising edge.
+- Command = **16 bytes + 4-byte CRC-32**. Host pulls **CS low**, clocks a byte/cycle.
+- Read handshake: host clocks 2 settle cycles; if the card didn't get "CRC OK" it
+  replies `01`; when ready it **pulls DAT0 high for 2 cycles**, then streams data +
+  4-byte CRC-32. This is the real-time behaviour any slot-side emulator must match —
+  reinforces why an FPGA (not an MCU bit-bang) is needed for the slot path.
+
+### 12.4 Actuator specs to design against
+- Genuine Joy-Con LRAs: resonant **180–250 Hz ±5%**; HD rumble usable span
+  **~41–1253 Hz** across two bands.
+- LRAs are most efficient **at resonance**; off-resonance drive wastes power and
+  feels weak — matters given the tight power budget. Pin the DRV2605L to the Taptic
+  engine's resonance and modulate amplitude (RTP mode) for the first pass.
+- Encoding math + lookup tables captured in [`docs/RUMBLE-ENCODING.md`](./docs/RUMBLE-ENCODING.md).
+
+### 12.5 Switch Lite internals (HOAG) — fitting space
+- SoC: **Tegra T210B01**, 4 GB LPDDR4X, **32 GB soldered eMMC**, **13.6 Wh** flat
+  battery, downsized fan/heatsink.
+- The **Game Card reader is a replaceable module** (good — implies a defined, openable
+  mechanical interface around the slot).
+- iFixit doesn't give slot/board dimensions; the team is sourcing exact cartridge
+  measurements + 3D models directly (DESIGN-NOTES §7). The shell can grow **upward**,
+  so actuator height isn't bound by the 2.1 mm card thickness.
+
+### Sources (round 2)
+- HD rumble encoding — [dekuNukem Switch RE: rumble_data_table.md](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/rumble_data_table.md), [HD-rumble data issue #11](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/issues/11)
+- Rumble decode in practice — [MissionControl](https://github.com/ndeadly/MissionControl)
+- libnx USB comms — [usb_comms.h](https://switchbrew.github.io/libnx/usb__comms_8h.html)
+- Gamecard timing — [switchbrew: Gamecard](https://switchbrew.org/wiki/Gamecard), [ReSwitched Wiki: gamecard](https://reswitched.tech/hardware/gamecard/)
+- Actuator specs — [Precision Microdrives: LRAs](https://www.precisionmicrodrives.com/linear-resonant-actuators-lras), [TechRadar: HD Rumble](https://www.techradar.com/news/meet-the-minds-behind-nintendo-switchs-hd-rumble-tech)
+- Switch Lite teardown — [iFixit](https://www.ifixit.com/Teardown/Nintendo+Switch+Lite+Teardown/126223)
