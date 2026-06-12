@@ -228,6 +228,11 @@ Pulling the threads together:
 - The Switch Lite's **integrated controller has no vibration device**. Games still
   send rumble through the standard **HID npad** protocol; only external wireless
   Joy-Con / Pro Controllers physically vibrate.
+- **Community data point (Path C contact):** someone built a Lite with Joy-Cons
+  physically embedded in the shell and confirmed paired Joy-Cons rumble normally.
+  This proves *external/paired* npad rumble works on a Lite — but **not** that the
+  *handheld* npad receives values, since those Joy-Cons are still external pads.
+  The handheld-vs-virtual-controller question below stays open.
 - **Implication for our capture point:** the live signal exists in `hid`, but it may
   be addressed to a paired controller's npad, not the handheld one. Open empirical
   question (**resolves DESIGN-NOTES open Q2**): does a game call
