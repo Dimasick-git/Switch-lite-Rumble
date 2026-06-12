@@ -25,7 +25,7 @@ selection, the power math, and the open problems that still need solving.
 | File | What it covers |
 | :--- | :--- |
 | [`README.md`](./README.md) | Project overview + the full technical specification (interception, bypass, power, data channel, feasibility) |
-| [`docs/`](./docs/) | Working design docs + the **decision log** ([`DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md)): the two architectures debated (external sysmodule dongle vs. in-slot cartridge emulation), what was agreed as the first step, and the team's technical findings |
+| [`docs/`](./docs/) | Working design docs + the **decision log** ([`DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md)): the architectures debated, what problem the project actually solves, the HD-rumble encoding ([`RUMBLE-ENCODING.md`](./docs/RUMBLE-ENCODING.md)) and haptic actuator systems ([`HAPTICS.md`](./docs/HAPTICS.md)) |
 | [`software/`](./software/) | The sysmodule that taps rumble in `hid` — dependency/toolchain list ([`DEPENDENCIES.md`](./software/DEPENDENCIES.md)) and a milestone-1 PoC skeleton ([`rumble-tap-sysmodule/`](./software/rumble-tap-sysmodule/)) |
 | [`CHIPS.md`](./CHIPS.md) | Hardware reference: game card physical envelope, 17-pin pinout, Lotus3, and concrete candidate chips (FPGA, MCU, haptic driver, actuator, power buffer) that fit the size constraint — with sources |
 | [`RESEARCH.md`](./RESEARCH.md) | Annotated link archive + findings: Lotus3 deep dive, every relevant GBAtemp thread, MIG prior art, the HID/vibration software path, dumping tools, crypto/keys, and what it all means for this project |
