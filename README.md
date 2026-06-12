@@ -26,6 +26,7 @@ selection, the power math, and the open problems that still need solving.
 | :--- | :--- |
 | [`README.md`](./README.md) | Project overview + the full technical specification (interception, bypass, power, data channel, feasibility) |
 | [`CHIPS.md`](./CHIPS.md) | Hardware reference: game card physical envelope, 17-pin pinout, Lotus3, and concrete candidate chips (FPGA, MCU, haptic driver, actuator, power buffer) that fit the size constraint — with sources |
+| [`hardware/`](./hardware/) | PCB design files and references. Currently the **MIG Dumper & Flashcart** KiCad projects, schematics, boardviews and BOMs (prior art, original by [sabogalc](https://github.com/sabogalc/MIG-Flash-PCBs), WTFPL) — the closest existing slot-fit, Lotus3-speaking boards |
 | [`LICENSE`](./LICENSE) | GPL-3.0 full text |
 
 ## Information collected so far
@@ -43,6 +44,10 @@ selection, the power math, and the open problems that still need solving.
   LRA, and a supercapacitor power buffer.
 - **The HID interception path** (MITM on the `hid` service via Atmosphere) for
   capturing the games' vibration values — see the spec below.
+- **Reference PCB designs** — the full MIG Dumper & Flashcart KiCad projects,
+  schematics, boardviews and BOMs, imported and cleaned up in
+  [`hardware/`](./hardware/). The Flashcart confirms a real-world slot-fit form
+  factor: a 0.8 mm ENIG board with 0201 passives speaking the Lotus3 protocol.
 
 ## Status
 
