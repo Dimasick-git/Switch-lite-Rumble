@@ -27,8 +27,9 @@ sysmodule, give the process `i2c` service access in its NPDM and call the API.
 ## Attribution
 
 The voltage-domain control logic is derived from runtime code by **Cooler3D**, from
-the **4IFIR** project, used with permission. Thanks! Only the game-card power
-domains are included here; the rest of the author's work is not part of this repo.
+the **[4IFIR](https://github.com/rashevskyv/4IFIR)** project, used with permission.
+Thanks! Only the game-card power domains are included here; the rest of the author's
+work is not part of this repo.
 
 ## Scope / safety
 
