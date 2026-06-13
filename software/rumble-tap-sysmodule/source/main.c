@@ -22,7 +22,7 @@
 
 /* Run as a pure background sysmodule (no applet, no main-thread services). */
 u32 __nx_applet_type = AppletType_None;
-u32 __nx_fs_num_sessions = 1;
+u32 __nx_fs_num_sessions = 0;
 
 #define INNER_HEAP_SIZE 0x80000
 size_t nx_inner_heap_size = INNER_HEAP_SIZE;
@@ -60,7 +60,7 @@ void __appExit(void)
 /* ---- vibration helpers ------------------------------------------------ */
 
 static HidVibrationDeviceHandle g_vibration_handles[2];
-static HidVibrationValue g_value_stop;
+static HidVibrationValue g_value_stop[2];
 
 static void rumble_init(void)
 {
@@ -71,10 +71,11 @@ static void rumble_init(void)
                                   HidNpadStyleTag_NpadHandheld);
 
     /* A "stop" value: zero amplitude at the conventional rest frequencies. */
-    g_value_stop.amp_low  = 0.0f;
-    g_value_stop.freq_low = 160.0f;
-    g_value_stop.amp_high  = 0.0f;
-    g_value_stop.freq_high = 320.0f;
+    g_value_stop[0].amp_low  = 0.0f;
+    g_value_stop[0].freq_low = 160.0f;
+    g_value_stop[0].amp_high  = 0.0f;
+    g_value_stop[0].freq_high = 320.0f;
+    g_value_stop[1] = g_value_stop[0];
 }
 
 static void rumble_burst(float amp)
@@ -86,7 +87,7 @@ static void rumble_burst(float amp)
 
     hidSendVibrationValues(g_vibration_handles, v, 2);
     svcSleepThread(150'000'000ULL); /* 150 ms */
-    hidSendVibrationValues(g_vibration_handles, &g_value_stop, 1);
+    hidSendVibrationValues(g_vibration_handles, g_value_stop, 2);
 }
 
 /* ---- main loop -------------------------------------------------------- */
