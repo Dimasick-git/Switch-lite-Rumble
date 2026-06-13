@@ -281,7 +281,7 @@ Pulling the threads together:
 
 ### Sources (round 2)
 - HD rumble encoding — [dekuNukem Switch RE: rumble_data_table.md](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/rumble_data_table.md), [HD-rumble data issue #11](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/issues/11)
-- Rumble decode in practice — [MissionControl](https://github.com/ndeadly/MissionControl)
+- Rumble decode in practice — [Mission-Control (our fork)](https://github.com/Dimasick-git/Mission-Control) / [upstream ndeadly/MissionControl](https://github.com/ndeadly/MissionControl)
 - libnx USB comms — [usb_comms.h](https://switchbrew.github.io/libnx/usb__comms_8h.html)
 - Gamecard timing — [switchbrew: Gamecard](https://switchbrew.org/wiki/Gamecard), [ReSwitched Wiki: gamecard](https://reswitched.tech/hardware/gamecard/)
 - Actuator specs — [Precision Microdrives: LRAs](https://www.precisionmicrodrives.com/linear-resonant-actuators-lras), [TechRadar: HD Rumble](https://www.techradar.com/news/meet-the-minds-behind-nintendo-switchs-hd-rumble-tech)
@@ -324,7 +324,7 @@ Consequences for us:
 | Repo | Why it matters |
 | :--- | :--- |
 | [cathery/sys-con](https://github.com/cathery/sys-con) | Third-party controller sysmodule on libstratosphere; documents the virtual-controller vibration limit (§13). |
-| [ndeadly/MissionControl](https://github.com/ndeadly/MissionControl) | Decodes HD rumble for third-party controllers — reuse its "two bands → one actuator" math. |
+| [Dimasick-git/Mission-Control](https://github.com/Dimasick-git/Mission-Control) (our fork of [ndeadly/MissionControl](https://github.com/ndeadly/MissionControl)) | Decodes HD rumble for third-party controllers — reuse its "two bands → one actuator" math. Our fork tracks upstream daily; vendored as the `references/MissionControl` submodule. |
 | [MIZUSHIKI/JoyShockLibrary-plus-HDRumble](https://github.com/MIZUSHIKI/JoyShockLibrary-plus-HDRumble) | PC-side HD-rumble encode/decode — a clean second reference for the byte format. |
 | [Ryochan7/BetterJoy](https://github.com/Ryochan7/BetterJoy) | Joy-Con/Pro on PC incl. rumble — practical packet examples. |
 | [dekuNukem/Nintendo_Switch_Reverse_Engineering](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering) | The canonical Joy-Con/HD-rumble byte-format tables. |

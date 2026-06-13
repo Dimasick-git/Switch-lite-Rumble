@@ -16,7 +16,7 @@ is copied into this repo's own source.
 
 | Path | Upstream | Why it's here |
 | :--- | :--- | :--- |
-| [`MissionControl/`](./MissionControl) | [ndeadly/MissionControl](https://github.com/ndeadly/MissionControl) | **HD-rumble decode.** Converts the `HidVibrationValue` bands into a drive signal for third-party actuators — directly reusable for our actuator-mapping milestone. Also a mature libstratosphere MITM (btdrv) reference. |
+| [`MissionControl/`](./MissionControl) | [Dimasick-git/Mission-Control](https://github.com/Dimasick-git/Mission-Control) (our fork of [ndeadly/MissionControl](https://github.com/ndeadly/MissionControl), tracks upstream daily) | **HD-rumble decode.** Converts the `HidVibrationValue` bands into a drive signal for third-party actuators — directly reusable for our actuator-mapping milestone. Also a mature libstratosphere MITM (btdrv) reference. |
 | [`Nintendo_Switch_Reverse_Engineering/`](./Nintendo_Switch_Reverse_Engineering) | [dekuNukem/…](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering) | The canonical **HD-rumble byte-format and frequency/amplitude lookup tables** (`rumble_data_table.md`) behind [`../docs/RUMBLE-ENCODING.md`](../docs/RUMBLE-ENCODING.md). |
 | [`sys-con/`](./sys-con) | [cathery/sys-con](https://github.com/cathery/sys-con) | libstratosphere controller sysmodule; documents the **virtual-controller vibration limit** that validates our MITM design (see [`../RESEARCH.md`](../RESEARCH.md) §13). |
 | [`switch-examples/`](./switch-examples) | [switchbrew/switch-examples](https://github.com/switchbrew/switch-examples) | Minimal, correct **libnx vibration example** (`hid/vibration`). |
