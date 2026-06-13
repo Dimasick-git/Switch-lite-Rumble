@@ -62,4 +62,4 @@ I'm looking for:
 **GBAtemp Discussion:** [Nintendo Switch Lite Rumble](https://gbatemp.net/threads/nintendo-switch-lite-rumble.682407/)
 
 ---
-*Project by Dimasick-git. No mention of AI allowed.*
+*Project by Dimasick-git.*
