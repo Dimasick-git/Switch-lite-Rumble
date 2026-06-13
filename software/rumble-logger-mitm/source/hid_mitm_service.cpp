@@ -2,6 +2,7 @@
  * rumble-logger-mitm — hid vibration MITM implementation. See hid_mitm_service.hpp.
  */
 #include <stratosphere.hpp>
+#include <algorithm>
 #include "hid_mitm_service.hpp"
 #include "logger.hpp"
 

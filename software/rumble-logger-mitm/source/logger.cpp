@@ -2,6 +2,7 @@
  * Minimal SD-card logger for the hid vibration MITM. See logger.hpp.
  */
 #include <stratosphere.hpp>
+#include <cstring>
 #include "logger.hpp"
 
 namespace ams::mitm::hid {
