@@ -1,3 +1,15 @@
 [submodule "software/rumble-logger-mitm/libstratosphere"]
 	path = software/rumble-logger-mitm/libstratosphere
 	url = https://github.com/Atmosphere-NX/Atmosphere-libs
+[submodule "references/MissionControl"]
+	path = references/MissionControl
+	url = https://github.com/ndeadly/MissionControl
+[submodule "references/Nintendo_Switch_Reverse_Engineering"]
+	path = references/Nintendo_Switch_Reverse_Engineering
+	url = https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering
+[submodule "references/sys-con"]
+	path = references/sys-con
+	url = https://github.com/cathery/sys-con
+[submodule "references/switch-examples"]
+	path = references/switch-examples
+	url = https://github.com/switchbrew/switch-examples

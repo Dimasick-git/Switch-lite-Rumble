@@ -91,6 +91,7 @@ normally — it just has no motor). From there:
 | [`CHIPS.md`](./CHIPS.md) | Hardware reference: card envelope, 17-pin pinout, Lotus3, and sized-to-fit chip candidates |
 | [`RESEARCH.md`](./RESEARCH.md) | Annotated source/thread archive: Lotus3 deep dive, GBAtemp threads, MIG, the software path, tools, crypto |
 | [`hardware/`](./hardware/) | MIG Dumper & Flashcart PCB reference files (prior art, by [sabogalc](https://github.com/sabogalc/MIG-Flash-PCBs)) |
+| [`references/`](./references/) | Upstream projects we study/reuse, as pinned git submodules (MissionControl, dekuNukem RE, sys-con, switch-examples) — fetch with `git submodule update --init` |
 | [`LICENSE`](./LICENSE) | GPL-3.0 |
 
 ## Get the build
