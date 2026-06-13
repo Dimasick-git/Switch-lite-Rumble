@@ -6,11 +6,11 @@ real `hid` so the console behaves exactly as normal. This is how we answer the o
 question *"does a Switch Lite actually receive rumble values, and what do they look
 like?"* without any guesswork.
 
-> **STATUS: work in progress, CI-gated.** The code is written to Atmosphère's own
-> MITM pattern (modelled on `ams_mitm` / `bpc_mitm`), but it has **not** been
-> verified on hardware and the build is still being brought to green in CI. The
-> `build` GitHub Actions workflow compiles it on every push (its job is allowed to
-> fail while we iterate). Treat this as the active development target, not a release.
+> **STATUS: builds green in CI; not yet hardware-tested.** The code is written to
+> Atmosphère's own MITM pattern (modelled on `ams_mitm` / `bpc_mitm`) and now
+> **compiles cleanly** against libstratosphere in the `build` GitHub Actions
+> workflow, which uploads an **SD-ready package** on every push. It has not yet been
+> run on a console — that's the next step (install, run a game, check the log).
 
 ## How it works
 
@@ -38,6 +38,10 @@ make            # builds libstratosphere, then the module
 Output: `out/.../rumble-logger-mitm.nsp`.
 
 ## Install (Atmosphère)
+
+Easiest: download the **`rumble-logger-mitm-SD`** artifact from the latest green
+[build run](https://github.com/Dimasick-git/Switch-lite-Rumble/actions), extract it,
+and copy the `atmosphere/` folder onto your SD card root. That gives you exactly:
 
 ```
 /atmosphere/contents/0100000000ABE200/exefs.nsp          <- the built nsp
