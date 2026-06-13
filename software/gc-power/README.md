@@ -33,9 +33,8 @@ work is not part of this repo.
 
 ## Scope / safety
 
-- This controls an **electrical power rail only**. It does **not** authenticate a
-  cartridge, does **not** touch the Lotus3 challenge-response, and does **not** give
-  access to game content. It powers the slot for an accessory.
+- This is the **power side** of the slot — the GC voltage rail over I2C, separate
+  from Lotus3 init/handshake.
 - Driving the GC rail is marked "use with caution" in the source overlay for a
   reason: wrong voltages or fighting the system's own power management can be
   destabilising. Test carefully on hardware.

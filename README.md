@@ -11,33 +11,27 @@
 
 ## What this project is
 
-An open research effort to add **tactile feedback (Rumble)** to the **Nintendo
-Switch Lite** — which has no built-in HD Rumble — by building a module that plugs
-into the **game card slot**. The slot is the only spare port on the Lite, so the
-challenge is getting both **power** and **vibration data** out of it past Nintendo's
-protections.
+I'm adding **tactile feedback (Rumble)** to the **Nintendo Switch Lite** — which
+ships with no built-in HD Rumble — by building a module that plugs into the **game
+card slot**. The slot is the only spare port on the Lite, so the challenge is pulling
+both **power** and **vibration data** out of it.
 
-This repo is the knowledge base for that effort: the protocol research, the chip
-selection, the power math, and the open problems that still need solving.
+This repo is my working knowledge base for that: the protocol research, the chip
+selection, the power math, the code, and the open problems I'm still solving.
 
 ## Two ways to deliver the signal
 
-Whichever path we take, **step one is the same**: a custom Atmosphère sysmodule that
-captures the live rumble values a game emits in `hid` (the Lite computes them
-normally — it just has no motor). From there:
+Either way, **step one is the same**: a custom Atmosphère sysmodule that captures the
+live rumble values a game emits in `hid` (the Lite computes them normally — it just
+has no motor to play them on). From there:
 
-1. **In-slot cartridge — the end goal.** A cartridge in the game-card slot carries
-   the actuator and is powered from the slot. Cleanest "plug it in and it works"
-   form factor; the hard part is slot power/data, policed by the **Lotus3** chip.
-2. **External USB-C / Bluetooth — the fallback.** The sysmodule forwards the captured
-   values to an external actuator. Less elegant, but sidesteps the slot entirely and
-   is testable today.
-
-> **Scope.** We pursue the **power, data-transport and actuator** sub-problems and
-> document Lotus3 from public sources. We do **not** ship a Lotus3
-> authentication/signature bypass — that's the copy-protection mechanism flashcarts
-> defeat, and the project doesn't need it (the USB-C/BT path is a complete, clean
-> alternative; powering a rail is not the same as authenticating a cartridge).
+1. **In-slot cartridge — the goal.** A cartridge in the game-card slot carries the
+   actuator and is powered from the slot. The cleanest "plug it in and it works" form
+   factor; the hard part is getting power and data through the slot, which the
+   **Lotus3** chip controls. This is the path I'm driving.
+2. **External USB-C / Bluetooth — the fallback.** The same sysmodule forwards the
+   captured values to an external actuator. Less elegant, but it sidesteps the slot
+   and works today.
 
 ## Goals & progress
 
