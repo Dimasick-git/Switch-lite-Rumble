@@ -52,6 +52,10 @@ Reboot, **launch a game with obvious rumble**, play for a bit, then read
 `sdmc:/rumble-logger.log`. Send that log back and we use it to decide the capture
 architecture (does the handheld npad get values, or do we need a virtual controller).
 
+> **Test gotcha:** if you see no entries, make sure **Controller Vibration is enabled
+> in System Settings** — there's a known firmware quirk where vibration isn't emitted
+> until it's toggled on (documented by the sys-con project). See `../../RESEARCH.md` §13.
+
 ## Files
 
 | File | Purpose |

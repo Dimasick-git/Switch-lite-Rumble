@@ -123,9 +123,10 @@ The community's collective brain on this. Read in roughly this order:
 
 This is the half that's *very* tractable, independent of the slot problem.
 
-- **The HID service** generates vibration on the console. We MITM it. Reference
-  command IDs (from the README spec): `SendVibrationValue` (153),
-  `SendVibrationValues` (154), carrying `VibrationValue` (amp/freq, low + high band).
+- **The HID service** generates vibration on the console. We MITM it. **Verified**
+  command IDs (switchbrew / libstratosphere): `SendVibrationValue` = **201**,
+  `SendVibrationValues` = **206**, carrying `VibrationValue` (amp/freq, low + high
+  band). (An early draft listed 153/154 — wrong.)
 - **Atmosphère `ams_mitm`** — the official MITM framework; the only CFW with the
   hooks to intercept these services.
   https://github.com/Atmosphere-NX/Atmosphere/blob/master/docs/components/modules/ams_mitm.md
@@ -285,3 +286,58 @@ Pulling the threads together:
 - Gamecard timing — [switchbrew: Gamecard](https://switchbrew.org/wiki/Gamecard), [ReSwitched Wiki: gamecard](https://reswitched.tech/hardware/gamecard/)
 - Actuator specs — [Precision Microdrives: LRAs](https://www.precisionmicrodrives.com/linear-resonant-actuators-lras), [TechRadar: HD Rumble](https://www.techradar.com/news/meet-the-minds-behind-nintendo-switchs-hd-rumble-tech)
 - Switch Lite teardown — [iFixit](https://www.ifixit.com/Teardown/Nintendo+Switch+Lite+Teardown/126223)
+
+---
+
+## 13. Key finding — why MITM, not a virtual controller (round 3)
+
+While reverse-engineering whether we could just *register a virtual controller* and
+read the rumble it receives, the **sys-con** project documents the firmware limit
+directly:
+
+> "Neither **AbstractedPad** nor **Hdls** functions in switch firmware allow you to
+> get the vibration value of the device. You could try to register a
+> `VibrationDeviceHandle` for the controller you wish to use, but it's difficult to
+> get working or to change any values."
+
+Consequences for us:
+- **You cannot read rumble back from a virtual/abstracted pad** — so the correct
+  design is to **MITM the `hid` service and intercept the game's outgoing
+  `SendVibrationValues` (206)** call, which is exactly what
+  [`rumble-logger-mitm`](./software/rumble-logger-mitm/) does. This validates the
+  architecture.
+- **Testing gotcha:** there's a known issue where no vibration is actually emitted
+  until you **toggle "Controller Vibration" back on in System Settings**. Check that
+  before concluding "no rumble" during a hardware test.
+- Source: [sys-con issue #1 / discussion](https://github.com/cathery/sys-con/issues/1).
+
+## 14. More repositories & tools (round 3)
+
+### Power / PMIC (the slot-power path)
+| Repo | Why it matters |
+| :--- | :--- |
+| [rashevskyv/4IFIR](https://github.com/rashevskyv/4IFIR) | The overclock CFW our game-card rail control derives from (Cooler3D contributed the voltage work). Reference for MAX77620/77812 runtime control. |
+| [KymPossibl/Switch-OC-Suite](https://github.com/KymPossibl/Switch-OC-Suite) | Another OC suite with extensive PMIC/regulator control — independent cross-check for register maps. |
+| [torvalds/linux — max77620-regulator.c](https://github.com/torvalds/linux/blob/master/drivers/regulator/max77620-regulator.c) | Authoritative MAX77620 register/voltage reference (the LDO/SD maps powering the slot). |
+
+### Controllers / rumble (the capture + decode path)
+| Repo | Why it matters |
+| :--- | :--- |
+| [cathery/sys-con](https://github.com/cathery/sys-con) | Third-party controller sysmodule on libstratosphere; documents the virtual-controller vibration limit (§13). |
+| [ndeadly/MissionControl](https://github.com/ndeadly/MissionControl) | Decodes HD rumble for third-party controllers — reuse its "two bands → one actuator" math. |
+| [MIZUSHIKI/JoyShockLibrary-plus-HDRumble](https://github.com/MIZUSHIKI/JoyShockLibrary-plus-HDRumble) | PC-side HD-rumble encode/decode — a clean second reference for the byte format. |
+| [Ryochan7/BetterJoy](https://github.com/Ryochan7/BetterJoy) | Joy-Con/Pro on PC incl. rumble — practical packet examples. |
+| [dekuNukem/Nintendo_Switch_Reverse_Engineering](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering) | The canonical Joy-Con/HD-rumble byte-format tables. |
+
+### Toolchain / framework
+| Repo | Why it matters |
+| :--- | :--- |
+| [switchbrew/libnx](https://github.com/switchbrew/libnx) | The hid vibration API + i2c service we build on. |
+| [Atmosphere-NX/Atmosphere-libs](https://github.com/Atmosphere-NX/Atmosphere-libs) | libstratosphere — the MITM framework (vendored as our submodule). |
+| [switchbrew/switch-examples](https://github.com/switchbrew/switch-examples) | Minimal correct vibration example. |
+| [Awesome-Switch (ReSwitched)](https://reswitched.github.io/awesome/) | Index of Switch homebrew/RE projects — good for finding anything not listed here. |
+
+### Sources (round 3)
+- Virtual-controller vibration limit — [sys-con issue #1](https://github.com/cathery/sys-con/issues/1), [discussion #1](https://github.com/cathery/sys-con/discussions/1)
+- 4IFIR / PMIC — [rashevskyv/4IFIR](https://github.com/rashevskyv/4IFIR), [Switch-OC-Suite](https://github.com/KymPossibl/Switch-OC-Suite), [Linux MAX77620 driver](https://github.com/torvalds/linux/blob/master/drivers/regulator/max77620-regulator.c)
+- HD rumble on PC — [JoyShockLibrary+HDRumble](https://github.com/MIZUSHIKI/JoyShockLibrary-plus-HDRumble), [BetterJoy](https://github.com/Ryochan7/BetterJoy)

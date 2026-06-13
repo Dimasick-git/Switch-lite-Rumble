@@ -120,8 +120,13 @@ A system module (sysmodule) based on Atmosphere must be implemented to act as a 
 
 | Service | Command | ID | Description |
 | :--- | :--- | :--- | :--- |
-| `hid` | `SendVibrationValue` | 153 | Send a single vibration value |
-| `hid` | `SendVibrationValues` | 154 | Batch send values for multiple motors |
+| `hid` | `SendVibrationValue` | 201 | Send a single vibration value |
+| `hid` | `SendVibrationValues` | 206 | Batch send values for multiple motors |
+
+> These are the **verified** `hid` command IDs (switchbrew / libstratosphere). An
+> early draft of this spec listed 153/154 — those were wrong. Related: 200
+> `GetVibrationDeviceInfo`, 202 `GetActualVibrationValue`,
+> 203 `CreateActiveVibrationDeviceList`, 212 `SendVibrationValueInBool`.
 
 **Mechanism:**
 1. The sysmodule registers an MITM handler for the `hid` port.
