@@ -47,8 +47,8 @@ jobs:
       TITLE_ID: "0100000000ABE200"
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch libstratosphere submodule
-        run: git submodule update --init --recursive software/rumble-logger-mitm/libstratosphere
+        with:
+          submodules: recursive
       - name: Build rumble-logger-mitm
         run: |
           export DEVKITPRO=/opt/devkitpro
