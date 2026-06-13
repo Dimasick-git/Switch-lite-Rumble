@@ -16,10 +16,8 @@
  * (from the 4IFIR project). Used here with permission, for the game-card
  * power domains only; the rest of the author's work is not part of this repo.
  *
- * Scope note: this only controls an electrical power rail. It does NOT
- * authenticate a cartridge, does NOT touch the Lotus3 challenge-response, and
- * does NOT enable reading game content — it just powers the slot for an
- * accessory.
+ * This controls the GC voltage rail over I2C — it's the power side of the slot,
+ * separate from Lotus3 init/handshake.
  * --------------------------------------------------------------------------
  */
 #pragma once

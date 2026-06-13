@@ -2,18 +2,12 @@
 
 **Author:** Dimasick-git
 **License:** GPL-3.0
-**Last updated:** 2026-06-12
+**Last updated:** 2026-06-13
 
 A running knowledge base for the Switch-lite-Rumble project: every useful source,
 discussion thread and technical finding about the Switch game-card interface, the
-Lotus3 ASIC, the cartridge protocol, existing flashcarts, and the software side of
-vibration. Annotated so you don't have to re-read everything to know what's in it.
-
-> **Disclaimer / scope.** This is reverse-engineering and homebrew research for an
-> accessibility-style hardware mod (adding rumble the Switch Lite physically lacks).
-> Sources below include leaked datasheets discussed publicly; they are linked for
-> technical study, not redistribution. Nothing here helps with piracy — the goal is
-> a *vibration* device, not a flashcart.
+Lotus3 ASIC, the cartridge protocol, and the software side of vibration. Annotated so
+I don't have to re-read everything to know what's in it.
 
 ---
 
@@ -370,10 +364,6 @@ have to work with. (Lotus/LAFW firmware is bumped by HOS at **4.0.0, 9.0.0, 11.0
 | [ITotalJustice/Gamecard-Installer-NX](https://github.com/ITotalJustice/Gamecard-Installer-NX) | Installs a gamecard's content to internal storage via FS — another example of FS gamecard-handle use. (link only) |
 | [masagrator/SaltyNX](https://github.com/masagrator/SaltyNX) | Sysmodule that injects code into retail games — a different but useful sysmodule/hook reference. (link only) |
 | [Atmosphere-NX/Atmosphere](https://github.com/Atmosphere-NX/Atmosphere) | The CFW itself; `fs.mitm`, the gamecard/`fs` service definitions, and `nogc` live here. (link only — too large to vendor) |
-
-> **Note on scope.** We catalogue cartridge/FS tooling for understanding the slot and
-> the FS layer. We do **not** add or build flashcart / Lotus3-authentication-bypass
-> projects — see [`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md) §12.
 
 ### Expert consultation (Cooler3D)
 Key technical point recorded in [`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md) §12:
