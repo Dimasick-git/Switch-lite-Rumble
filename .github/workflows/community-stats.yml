@@ -1,0 +1,62 @@
+name: community-stats
+
+# Tracks how much attention the project's GBAtemp discussion thread is getting
+# (views + replies) and records a dated history into community/thread-stats.md.
+# Best-effort: GBAtemp may rate-limit CI runners; on failure it records "blocked"
+# and the parser can be tuned once we see the real HTML.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'   # once a day
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: community-stats
+  cancel-in-progress: false
+
+jobs:
+  thread-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch GBAtemp thread stats
+        id: fetch
+        run: |
+          set +e
+          URL="https://gbatemp.net/threads/nintendo-switch-lite-rumble.682407/"
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+          HTML="$(curl -fsSL --max-time 30 -A "$UA" "$URL")"
+          if [ -z "$HTML" ]; then
+            echo "views=n/a"    >> "$GITHUB_OUTPUT"
+            echo "replies=n/a"  >> "$GITHUB_OUTPUT"
+            echo "status=blocked" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # XenForo embeds JSON-LD InteractionCounter values (comments/replies).
+          REPLIES="$(printf '%s' "$HTML" | grep -oE '"userInteractionCount"[: ]*"?[0-9]+' | grep -oE '[0-9]+' | head -1)"
+          # "Views" stat appears near the thread header in most themes.
+          VIEWS="$(printf '%s' "$HTML" | grep -oiE '[0-9][0-9.,]*[[:space:]]*(views|просмотр)' | grep -oE '[0-9][0-9.,]*' | head -1)"
+          echo "views=${VIEWS:-n/a}"     >> "$GITHUB_OUTPUT"
+          echo "replies=${REPLIES:-n/a}" >> "$GITHUB_OUTPUT"
+          echo "status=ok" >> "$GITHUB_OUTPUT"
+
+      - name: Update stats file
+        run: |
+          DATE="$(date -u +%Y-%m-%d)"
+          ROW="| ${DATE} | ${{ steps.fetch.outputs.views }} | ${{ steps.fetch.outputs.replies }} | ${{ steps.fetch.outputs.status }} |"
+          F="community/thread-stats.md"
+          if ! grep -qF "| ${DATE} |" "$F"; then
+            sed -i "/<!-- stats:end -->/i ${ROW}" "$F"
+          fi
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "Dimasick-git"
+          git config user.email "dimaorynchukk@gmail.com"
+          git add community/thread-stats.md
+          git diff --staged --quiet || git commit -m "community: update GBAtemp thread stats [skip ci]"
+          git push

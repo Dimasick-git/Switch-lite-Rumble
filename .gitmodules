@@ -13,3 +13,6 @@
 [submodule "references/MissionControl"]
 	path = references/MissionControl
 	url = https://github.com/Dimasick-git/Mission-Control
+[submodule "references/nxdumptool"]
+	path = references/nxdumptool
+	url = https://github.com/DarkMatterCore/nxdumptool

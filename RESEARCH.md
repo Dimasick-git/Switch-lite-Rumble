@@ -341,3 +341,48 @@ Consequences for us:
 - Virtual-controller vibration limit — [sys-con issue #1](https://github.com/cathery/sys-con/issues/1), [discussion #1](https://github.com/cathery/sys-con/discussions/1)
 - 4IFIR / PMIC — [rashevskyv/4IFIR](https://github.com/rashevskyv/4IFIR), [Switch-OC-Suite](https://github.com/KymPossibl/Switch-OC-Suite), [Linux MAX77620 driver](https://github.com/torvalds/linux/blob/master/drivers/regulator/max77620-regulator.c)
 - HD rumble on PC — [JoyShockLibrary+HDRumble](https://github.com/MIZUSHIKI/JoyShockLibrary-plus-HDRumble), [BetterJoy](https://github.com/Ryochan7/BetterJoy)
+
+---
+
+## 15. Cartridge ↔ Atmosphère tooling, power & prior attempts (round 4)
+
+### Has anyone done "rumble powered by the slot" before?
+Not publicly. Searches turn up only: external **audio-triggered grips** (Nyko Shock
+'N' Rock), the **Joy-Con-transplant** hardmod (our Path C), and PC-side rumble
+libraries. No project powers an **external accessory from the game-card slot**, and
+no public Lotus3 power/auth bypass exists for this purpose. So the slot-power and
+"does GCA energise the pins" questions are genuinely unexplored — our own hardware
+test is the way to answer them.
+
+### `nogc` — the FS-side gamecard on/off control
+Atmosphère exposes **`nogc`** (`[stratosphere] nogc = 0|1` in
+`config/stratosphere.ini`): `1` = force the Game Card reader **off**, `0` = force it
+**on**. By default it auto-protects the reader after a firmware bump. This is the
+opposite of what we want, but it documents that the **FS/stratosphere layer has a
+clean switch over the gamecard subsystem** — the same layer the slot-power idea would
+have to work with. (Lotus/LAFW firmware is bumped by HOS at **4.0.0, 9.0.0, 11.0.0,
+12.0.0, 14.0.0** and can't be downgraded; mismatch → error 2002-2634.)
+
+### Cartridge-interacting tools (legit, FS-API)
+| Repo | What it does (relevance) |
+| :--- | :--- |
+| [DarkMatterCore/nxdumptool](https://github.com/DarkMatterCore/nxdumptool) | Dumps your own gamecards via the legit FS API; parses CardId/Certificate/InitialData and **dumps the Lotus LAFW from RAM**. Best map of the FS↔gamecard path. **Vendored** as `references/nxdumptool`. |
+| [ITotalJustice/Gamecard-Installer-NX](https://github.com/ITotalJustice/Gamecard-Installer-NX) | Installs a gamecard's content to internal storage via FS — another example of FS gamecard-handle use. (link only) |
+| [masagrator/SaltyNX](https://github.com/masagrator/SaltyNX) | Sysmodule that injects code into retail games — a different but useful sysmodule/hook reference. (link only) |
+| [Atmosphere-NX/Atmosphere](https://github.com/Atmosphere-NX/Atmosphere) | The CFW itself; `fs.mitm`, the gamecard/`fs` service definitions, and `nogc` live here. (link only — too large to vendor) |
+
+> **Note on scope.** We catalogue cartridge/FS tooling for understanding the slot and
+> the FS layer. We do **not** add or build flashcart / Lotus3-authentication-bypass
+> projects — see [`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md) §12.
+
+### Expert consultation (Cooler3D)
+Key technical point recorded in [`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md) §12:
+**without left/right domain separation you can't build "full" vibration** — keep the
+captured stream split per side (the logger already logs per-handle), and a proper
+build likely needs **two actuators (L + R)**, not one.
+
+### Sources (round 4)
+- Slot power / pinout — [switchbrew: Gamecard](https://switchbrew.org/wiki/Gamecard), [GBAtemp: pin layout](https://gbatemp.net/threads/pin-layout-of-switchs-game-card.464148/)
+- `nogc` + Lotus FW updates — [Atmosphère configurations](https://github.com/Atmosphere-NX/Atmosphere/blob/master/docs/features/configurations.md), [Hacks Guide: Gamecard Reader](https://wiki.hacks.guide/wiki/Switch:Gamecard_Reader)
+- Cartridge tools — [nxdumptool](https://github.com/DarkMatterCore/nxdumptool), [Gamecard-Installer-NX](https://github.com/ITotalJustice/Gamecard-Installer-NX), [SaltyNX](https://github.com/masagrator/SaltyNX)
+- Switch Lite rumble alternatives — [Nyko grips (Gizmodo)](https://gizmodo.com/snap-on-grips-upgrade-the-nintendo-switch-lite-with-rum-1844375655)

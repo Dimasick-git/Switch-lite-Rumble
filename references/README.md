@@ -20,6 +20,7 @@ is copied into this repo's own source.
 | [`Nintendo_Switch_Reverse_Engineering/`](./Nintendo_Switch_Reverse_Engineering) | [dekuNukem/…](https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering) | The canonical **HD-rumble byte-format and frequency/amplitude lookup tables** (`rumble_data_table.md`) behind [`../docs/RUMBLE-ENCODING.md`](../docs/RUMBLE-ENCODING.md). |
 | [`sys-con/`](./sys-con) | [cathery/sys-con](https://github.com/cathery/sys-con) | libstratosphere controller sysmodule; documents the **virtual-controller vibration limit** that validates our MITM design (see [`../RESEARCH.md`](../RESEARCH.md) §13). |
 | [`switch-examples/`](./switch-examples) | [switchbrew/switch-examples](https://github.com/switchbrew/switch-examples) | Minimal, correct **libnx vibration example** (`hid/vibration`). |
+| [`nxdumptool/`](./nxdumptool) | [DarkMatterCore/nxdumptool](https://github.com/DarkMatterCore/nxdumptool) | The clearest **cartridge ↔ FS** reference: gamecard handle/CardId/Certificate/InitialData via the legit FS API, and LAFW dump from RAM. Maps the FS layer the slot-power idea must work with. |
 
 > Build dependency (separate, under `software/`): **libstratosphere**
 > ([Atmosphere-libs](https://github.com/Atmosphere-NX/Atmosphere-libs)) is vendored
