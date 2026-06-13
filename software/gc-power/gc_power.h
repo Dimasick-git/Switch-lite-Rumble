@@ -14,14 +14,7 @@
  * --------------------------------------------------------------------------
  * Attribution: derived from runtime voltage-control code by **Cooler3D**
  * (from the 4IFIR project). Used here with permission, for the game-card
- * power domains only.
- *
- * Deliberately NOT included from the source material (out of scope and/or the
- * author's private work — do not add them here):
- *   - ALC5639 audio codec / hardware equalizer registers  (author's secret)
- *   - MAX77812 protected loop-compensation / noise-reduction registers
- *   - CPU / GPU / DRAM / SOC / display / USB / MMC voltage domains
- *   - Battery fuel-gauge (MAX17050) and charger (BQ24193) control
+ * power domains only; the rest of the author's work is not part of this repo.
  *
  * Scope note: this only controls an electrical power rail. It does NOT
  * authenticate a cartridge, does NOT touch the Lotus3 challenge-response, and

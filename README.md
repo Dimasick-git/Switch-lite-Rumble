@@ -20,82 +20,88 @@ protections.
 This repo is the knowledge base for that effort: the protocol research, the chip
 selection, the power math, and the open problems that still need solving.
 
+## Two ways to deliver the signal
+
+Whichever path we take, **step one is the same**: a custom Atmosphère sysmodule that
+captures the live rumble values a game emits in `hid` (the Lite computes them
+normally — it just has no motor). From there:
+
+1. **In-slot cartridge — the end goal.** A cartridge in the game-card slot carries
+   the actuator and is powered from the slot. Cleanest "plug it in and it works"
+   form factor; the hard part is slot power/data, policed by the **Lotus3** chip.
+2. **External USB-C / Bluetooth — the fallback.** The sysmodule forwards the captured
+   values to an external actuator. Less elegant, but sidesteps the slot entirely and
+   is testable today.
+
+> **Scope.** We pursue the **power, data-transport and actuator** sub-problems and
+> document Lotus3 from public sources. We do **not** ship a Lotus3
+> authentication/signature bypass — that's the copy-protection mechanism flashcarts
+> defeat, and the project doesn't need it (the USB-C/BT path is a complete, clean
+> alternative; powering a rail is not the same as authenticating a cartridge).
+
+## Goals & progress
+
+| Goal | Status | Notes |
+| :--- | :--- | :--- |
+| Confirm the rumble signal exists / is reachable on a Lite | ✅ **Done** | Paired Joy-Cons vibrate from a game; the `hid` pipeline is live |
+| Software: capture what a game sends (hid MITM logger) | ✅ **Built** | [`rumble-logger-mitm`](./software/rumble-logger-mitm/) compiles green in CI, ships an SD-ready package; hardware test pending |
+| Software: prove a sysmodule loads + drives the vibration API | ✅ **Built** | [`rumble-tap-sysmodule`](./software/rumble-tap-sysmodule/) (libnx), logs to SD |
+| Power the game-card rail at runtime | ✅ **Done (code)** | [`gc-power`](./software/gc-power/): `GCA`→**3.1 V** demonstrated via overlay |
+| Pick the actuator + driver | ✅ **Decided** | iPhone 12 **Taptic Engine** + **DRV2605L** — see [`docs/HAPTICS.md`](./docs/HAPTICS.md) |
+| Build automation | ✅ **Done** | GitHub Actions builds both sysmodules → SD-ready artifacts |
+| Does enabling GCA power the **physical slot pins** (vs only Lotus3)? | ❔ **Open** | Needs a multimeter on hardware |
+| Does the Lite's **handheld npad** receive rumble (vs only paired pads)? | ❔ **Open** | Decides whether we need a virtual controller — run a game + read the log |
+| HD-rumble → single-actuator mapping | 🔄 **Planned** | Math + lookup tables in [`docs/RUMBLE-ENCODING.md`](./docs/RUMBLE-ENCODING.md) |
+| Final transport (in-slot vs USB-C/BT) | 🔄 **Open** | Pick after measuring slot power + latency |
+| Physical fit / cartridge shell | 🔄 **In progress** | Shell can grow upward (only the bottom is fixed); exact measurements being taken |
+| Hardware prototype | ⬜ **Not started** | — |
+
+## What we've found (documented)
+
+- **The signal is live and trivially sendable.** The Lite's `hid` computes vibration
+  as usual; only the built-in actuator is missing. Sending it from homebrew is one
+  call — confirmed on a paired Joy-Con.
+- **Game-card power is controllable at runtime.** The **GCA** rail (MAX77620 LDO3)
+  was driven to **3100 mV** = the cartridge 3.1 V VCC, and **GCC** (LDO5) is the
+  ~1.8 V I/O rail. Code: [`software/gc-power/`](./software/gc-power/). *Open:* does
+  this reach the slot pins or stop at Lotus3.
+- **`hid` vibration command IDs (verified):** `SendVibrationValue` = **201**,
+  `SendVibrationValues` = **206** (an early note's 153/154 were wrong).
+- **Lotus3 internals:** the gamecard ASIC is a **Cortex-M3** (4 KB ROM / 42 KB SRAM)
+  with a hardware RNG and an **RSA-OAEP + AES-128 challenge-response** auth chain,
+  bridging the Tegra (eMMC/SDMMC2 vendor commands) to the card. Full breakdown +
+  every source in [`RESEARCH.md`](./RESEARCH.md).
+- **Slot physical/electrical facts:** full 17-pin pinout, 1.8 V logic / 3.1 V core,
+  25 MHz bus, the ~21 × 31 × 3 mm envelope, and the >300 mA actuator-peak vs slot
+  budget problem — [`CHIPS.md`](./CHIPS.md).
+- **MIG prior art (corrected):** a teardown shows MIG's FPGA is a **Microsemi
+  IGLOO2 M2GL010** with an **ESP32-S3** helper (not an iCE40). PCB references in
+  [`hardware/`](./hardware/).
+- **Actuator & encoding:** HD rumble is two amplitude/frequency bands (~41–1253 Hz);
+  collapse to one resonant actuator (Joy-Con LRAs sit at 180–250 Hz). MissionControl
+  already does this decode. See [`docs/HAPTICS.md`](./docs/HAPTICS.md) and
+  [`docs/RUMBLE-ENCODING.md`](./docs/RUMBLE-ENCODING.md).
+
 ## What's in this repo
 
-| File | What it covers |
+| Path | What it covers |
 | :--- | :--- |
-| [`README.md`](./README.md) | Project overview + the full technical specification (interception, bypass, power, data channel, feasibility) |
-| [`docs/`](./docs/) | Working design docs + the **decision log** ([`DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md)): the architectures debated, what problem the project actually solves, the HD-rumble encoding ([`RUMBLE-ENCODING.md`](./docs/RUMBLE-ENCODING.md)) and haptic actuator systems ([`HAPTICS.md`](./docs/HAPTICS.md)) |
-| [`software/`](./software/) | The sysmodule that taps rumble in `hid` — dependency/toolchain list ([`DEPENDENCIES.md`](./software/DEPENDENCIES.md)) and a milestone-1 PoC skeleton ([`rumble-tap-sysmodule/`](./software/rumble-tap-sysmodule/)) |
-| [`CHIPS.md`](./CHIPS.md) | Hardware reference: game card physical envelope, 17-pin pinout, Lotus3, and concrete candidate chips (FPGA, MCU, haptic driver, actuator, power buffer) that fit the size constraint — with sources |
-| [`RESEARCH.md`](./RESEARCH.md) | Annotated link archive + findings: Lotus3 deep dive, every relevant GBAtemp thread, MIG prior art, the HID/vibration software path, dumping tools, crypto/keys, and what it all means for this project |
-| [`hardware/`](./hardware/) | PCB design files and references. Currently the **MIG Dumper & Flashcart** KiCad projects, schematics, boardviews and BOMs (prior art, original by [sabogalc](https://github.com/sabogalc/MIG-Flash-PCBs), WTFPL) — the closest existing slot-fit, Lotus3-speaking boards |
-| [`LICENSE`](./LICENSE) | GPL-3.0 full text |
+| [`software/`](./software/) | The code. Two CI-built sysmodules — [`rumble-logger-mitm`](./software/rumble-logger-mitm/) (hid MITM vibration logger) and [`rumble-tap-sysmodule`](./software/rumble-tap-sysmodule/) (libnx PoC) — plus [`gc-power`](./software/gc-power/) (game-card rail control) and [`DEPENDENCIES.md`](./software/DEPENDENCIES.md) |
+| [`docs/`](./docs/) | Design decisions ([`DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md)), HD-rumble encoding ([`RUMBLE-ENCODING.md`](./docs/RUMBLE-ENCODING.md)), haptics ([`HAPTICS.md`](./docs/HAPTICS.md)), and the two architecture write-ups |
+| [`CHIPS.md`](./CHIPS.md) | Hardware reference: card envelope, 17-pin pinout, Lotus3, and sized-to-fit chip candidates |
+| [`RESEARCH.md`](./RESEARCH.md) | Annotated source/thread archive: Lotus3 deep dive, GBAtemp threads, MIG, the software path, tools, crypto |
+| [`hardware/`](./hardware/) | MIG Dumper & Flashcart PCB reference files (prior art, by [sabogalc](https://github.com/sabogalc/MIG-Flash-PCBs)) |
+| [`LICENSE`](./LICENSE) | GPL-3.0 |
 
-## Information collected so far
+## Get the build
 
-- **Physical envelope** of the Switch game card (~21 × 31 × 3 mm) and what that
-  means for component packages — see [`CHIPS.md`](./CHIPS.md).
-- **Full 17-pin slot pinout**, logic levels (1.8 V), and the 3.1 V / 1.8 V power
-  budget, sourced from switchbrew.
-- **Lotus3 ASIC** behaviour: power sequencing, header read, challenge-response, and
-  the power-gating-on-failure that we have to defeat.
-- **MIG Switch architecture** as prior art: a low-cost iCE40 FPGA emulating the
-  gamecard LSI, managed by an ESP32 — confirming the approach is viable.
-- **Concrete part candidates** sized to the envelope: Lattice iCE40 UltraLite
-  (1.4 × 1.4 mm WLCSP), ESP32-C3, TI DRV2605L haptic driver (1.5 × 1.5 mm), coin
-  LRA, and a supercapacitor power buffer.
-- **The HID interception path** (MITM on the `hid` service via Atmosphere) for
-  capturing the games' vibration values — see the spec below.
-- **Reference PCB designs** — the full MIG Dumper & Flashcart KiCad projects,
-  schematics, boardviews and BOMs, imported and cleaned up in
-  [`hardware/`](./hardware/). The Flashcart confirms a real-world slot-fit form
-  factor: a 0.8 mm ENIG board with 0201 passives speaking the Lotus3 protocol.
-- **Lotus3 internals** — the gamecard ASIC is a Cortex-M3 with 4 KB ROM / 42 KB
-  SRAM, a hardware RNG, and an RSA-OAEP + AES-128 challenge-response auth chain;
-  it bridges the Tegra (eMMC/SDMMC2 vendor commands) to the card. Full breakdown
-  and every source/discussion thread is collected in [`RESEARCH.md`](./RESEARCH.md).
+GitHub Actions builds everything on each push. Grab the latest **green**
+[build run](https://github.com/Dimasick-git/Switch-lite-Rumble/actions), download the
+**`Switch-lite-Rumble-SD`** artifact, extract it, and copy the `atmosphere/` folder
+to your SD card root. Reboot, launch a game with rumble, and read the logs
+(`sdmc:/rumble-logger.log`). Per-module setup is in each folder's README.
 
-## Status
-
-**Research / pre-prototype.** No hardware has been built yet.
-
-Whichever transport we use, **step one is the same**: a custom Atmosphère sysmodule
-that captures the live rumble values a game emits in `hid`. That capture work is
-underway in [`software/`](./software/) and is independent of how the signal finally
-reaches the motor.
-
-Two transports are on the table (full discussion in
-[`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md)):
-
-1. **In-slot cartridge — the end goal.** A cartridge that lives in the game-card
-   slot and carries the actuator: the cleanest "plug it in and it just works" form
-   factor. The hard part is getting the slot to power and talk to a non-original
-   device, which is gated by the **Lotus3** controller.
-   - **Power progress:** the game-card rail can be driven at runtime over I²C — a
-     homebrew overlay was shown setting the **GCA** domain to **3100 mV** (the
-     cartridge 3.1 V rail). Control code is in [`software/gc-power/`](./software/gc-power/)
-     (thanks to Cooler3D / 4IFIR). Still open: whether this powers the physical slot
-     pins or only Lotus3.
-2. **External / USB-C or Bluetooth — the fallback.** The same sysmodule forwards the
-   captured values to an external actuator. Not as elegant, but it sidesteps the
-   slot entirely and is testable today.
-
-> **Honest scope note.** Getting the slot to keep power on for an unauthenticated
-> device, and forging the Lotus3 authentication, is the same mechanism that defeats
-> the gamecard copy-protection (it's what flashcarts do). This repo documents how
-> Lotus3 works (all from public sources) and pursues the power/data/actuator
-> sub-problems, but it does **not** ship a working authentication/signature bypass.
-> The USB-C/BT fallback exists precisely so the project has a complete, clean path
-> that needs none of that.
-
-The biggest open unknowns are where exactly to tap vibration in `hid`, whether the
-handheld npad even receives rumble values on a Lite, channel latency, and the
-HD-rumble→actuator mapping — see the open questions in
-[`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md#9-открытые-вопросы-что-реверсить-дальше)
-and [`CHIPS.md`](./CHIPS.md).
-
-**Discussion:** https://gbatemp.net/threads/nintendo-switch-lite-rumble.682407/
+**Discussion / help:** https://gbatemp.net/threads/nintendo-switch-lite-rumble.682407/
 
 ---
 
@@ -205,8 +211,8 @@ reply on the project's discussion thread:
 
 - **Cooler3D** — runtime game-card power-rail control (from the 4IFIR project),
   which powers the cartridge slot at 3.1 V. See [`software/gc-power/`](./software/gc-power/).
-  Only the game-card power domains were used; the author's audio/equalizer work and
-  unrelated registers are intentionally not included.
+  Only the game-card power domains were used; the rest of the author's work is not
+  part of this repo.
 - **sabogalc** — MIG Dumper/Flashcart PCB reference files ([`hardware/`](./hardware/)).
 
 ---

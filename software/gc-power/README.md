@@ -27,18 +27,8 @@ sysmodule, give the process `i2c` service access in its NPDM and call the API.
 ## Attribution
 
 The voltage-domain control logic is derived from runtime code by **Cooler3D**, from
-the **4IFIR** project, used with permission. Thanks!
-
-## Intentionally excluded
-
-Only the game-card power domains are included here. The following from the source
-material are **deliberately left out** — they are unrelated to this project and/or
-the author's private work, and must not be added:
-
-- **ALC5639 audio codec / hardware-equalizer registers** — the author's secret.
-- MAX77812 protected loop-compensation / noise-reduction registers.
-- CPU / GPU / DRAM / SOC / display / USB / MMC voltage domains.
-- Battery fuel-gauge (MAX17050) and charger (BQ24193) control.
+the **4IFIR** project, used with permission. Thanks! Only the game-card power
+domains are included here; the rest of the author's work is not part of this repo.
 
 ## Scope / safety
 
