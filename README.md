@@ -60,23 +60,37 @@ selection, the power math, and the open problems that still need solving.
 
 **Research / pre-prototype.** No hardware has been built yet.
 
-Two architectures are on the table (full discussion in
+Whichever transport we use, **step one is the same**: a custom Atmosphère sysmodule
+that captures the live rumble values a game emits in `hid`. That capture work is
+underway in [`software/`](./software/) and is independent of how the signal finally
+reaches the motor.
+
+Two transports are on the table (full discussion in
 [`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md)):
 
-1. **External / sysmodule dongle (agreed first step).** A custom Atmosphère
-   sysmodule taps the live rumble values in `hid` and forwards them over USB-C /
-   Bluetooth to an external actuator. No game-card slot involved, no protections
-   touched — clean, legal, and testable today. This is where the work starts.
-2. **In-slot cartridge emulation (deferred).** A MIG-style cartridge that lives in
-   the slot. Elegant, but it depends on getting power past the Lotus3
-   authentication, which overlaps with copy-protection circumvention — so it's
-   parked, not pursued, until a power path exists that doesn't touch content
-   protection.
+1. **In-slot cartridge — the end goal.** A cartridge that lives in the game-card
+   slot and carries the actuator: the cleanest "plug it in and it just works" form
+   factor. The hard part is getting the slot to power and talk to a non-original
+   device, which is gated by the **Lotus3** controller.
+2. **External / USB-C or Bluetooth — the fallback.** The same sysmodule forwards the
+   captured values to an external actuator. Not as elegant, but it sidesteps the
+   slot entirely and is testable today.
 
-The biggest open unknowns are where exactly to tap vibration in `hid`, channel
-latency, and the HD-rumble→actuator mapping — see the open questions in
+> **Honest scope note.** Getting the slot to keep power on for an unauthenticated
+> device, and forging the Lotus3 authentication, is the same mechanism that defeats
+> the gamecard copy-protection (it's what flashcarts do). This repo documents how
+> Lotus3 works (all from public sources) and pursues the power/data/actuator
+> sub-problems, but it does **not** ship a working authentication/signature bypass.
+> The USB-C/BT fallback exists precisely so the project has a complete, clean path
+> that needs none of that.
+
+The biggest open unknowns are where exactly to tap vibration in `hid`, whether the
+handheld npad even receives rumble values on a Lite, channel latency, and the
+HD-rumble→actuator mapping — see the open questions in
 [`docs/DESIGN-NOTES.md`](./docs/DESIGN-NOTES.md#9-открытые-вопросы-что-реверсить-дальше)
 and [`CHIPS.md`](./CHIPS.md).
+
+**Discussion:** https://gbatemp.net/threads/nintendo-switch-lite-rumble.682407/
 
 ---
 
@@ -175,7 +189,10 @@ I, Dimasick-git, can do reverse engineering, but I need help:
 - Circuit designer / FPGA developer
 - Tester with custom firmware
 
-**How to contact:** create an Issue in this repository with the tag `[help]`.
+**How to contact:** create an Issue in this repository with the tag `[help]`, or
+reply on the project's discussion thread:
+
+- **GBAtemp thread:** https://gbatemp.net/threads/nintendo-switch-lite-rumble.682407/
 
 ---
 

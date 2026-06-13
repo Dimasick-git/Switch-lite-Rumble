@@ -79,6 +79,7 @@ The community's collective brain on this. Read in roughly this order:
 
 | Thread | Why it matters | Link |
 | :--- | :--- | :--- |
+| **Nintendo Switch Lite Rumble** (this project's own thread) | Where we recruit help and post progress — Atmosphère programmers, FPGA/circuit folks, testers | https://gbatemp.net/threads/nintendo-switch-lite-rumble.682407/ |
 | **Switch Cartridge - Reverse Engineering** (the big one, 10+ pages) | The foundational RE thread: captures, pinouts, protocol guesses, FPGA emulation attempts | https://gbatemp.net/threads/switch-cartridge-reverse-engineering.464580/ |
 | **The Switch Flashcart Thread (Mig Switch/UnlockSwitch etc.)** (130+ pages) | Living thread on every flashcart; MIG internals (ESP32 + iCE40 FPGA), encrypted firmware, scratched chip markings | https://gbatemp.net/threads/the-switch-flashcart-thread-mig-switch-unlockswitch-etc.651852/ |
 | **Why is there no Switch flash cart?** | The "it's impossible / no it isn't" debate; clearest statement of the Lotus3 barrier and the eMMC-emulation counterargument | https://gbatemp.net/threads/why-is-there-no-switch-flash-cart.604197/ |

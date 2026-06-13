@@ -1,0 +1,57 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'software/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    paths:
+      - 'software/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+jobs:
+  # Reliable baseline: the plain-libnx capture/diagnostic sysmodule.
+  rumble-tap-libnx:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build rumble-tap-sysmodule
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          cd software/rumble-tap-sysmodule
+          make -j$(nproc)
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rumble-tap-sysmodule
+          path: |
+            software/rumble-tap-sysmodule/*.nsp
+            software/rumble-tap-sysmodule/*.nso
+            software/rumble-tap-sysmodule/*.npdm
+
+  # Work-in-progress: the libstratosphere hid MITM that logs what a *game* sends.
+  # Allowed to fail while we iterate the build from CI logs.
+  rumble-logger-mitm:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build rumble-logger-mitm
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          cd software/rumble-logger-mitm
+          make -j$(nproc)
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rumble-logger-mitm
+          path: |
+            software/rumble-logger-mitm/**/*.nsp
