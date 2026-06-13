@@ -12,11 +12,13 @@ game-card slot or any protection.
 | :--- | :--- |
 | [`DEPENDENCIES.md`](./DEPENDENCIES.md) | Toolchain + every library needed, with install commands and links |
 | [`rumble-tap-sysmodule/`](./rumble-tap-sysmodule/) | **libnx** PoC: proves the sysmodule loads, drives the vibration API, and logs to `sdmc:/rumble-tap.log`. Built in CI. |
-| [`rumble-logger-mitm/`](./rumble-logger-mitm/) | **libstratosphere `hid` MITM** that logs the vibration a *game* emits to `sdmc:/rumble-logger.log` and forwards it untouched. The real capture tool — **WIP, CI-gated.** |
+| [`rumble-logger-mitm/`](./rumble-logger-mitm/) | **libstratosphere `hid` MITM** that logs the vibration a *game* emits to `sdmc:/rumble-logger.log` and forwards it untouched. The real capture tool — **builds green in CI**, produces an SD-ready package. |
+| [`gc-power/`](./gc-power/) | Runtime control of the game-card power rail over I²C (GCA ≈ 3.1 V, GCC ≈ 1.8 V) — the "power" half of the in-slot path. Game-card domains only; credit **Cooler3D** / 4IFIR. |
 
-Both are built automatically on push by [`.github/workflows/build.yml`](../.github/workflows/build.yml).
-The libnx PoC is the reliable baseline; the MITM logger is the active target whose
-build is being brought to green in CI.
+Both sysmodules build automatically on push via
+[`.github/workflows/build.yml`](../.github/workflows/build.yml) (devkitPro docker)
+and upload an **SD-ready package** — download the artifact, extract, and copy the
+`atmosphere/` folder to your SD root. Both jobs are green.
 
 ## Milestones (matches the step plan)
 

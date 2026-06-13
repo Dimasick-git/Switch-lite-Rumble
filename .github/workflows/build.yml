@@ -17,6 +17,8 @@ jobs:
   rumble-tap-libnx:
     runs-on: ubuntu-latest
     container: devkitpro/devkita64:latest
+    env:
+      TITLE_ID: "0100000000ABE100"
     steps:
       - uses: actions/checkout@v4
       - name: Build rumble-tap-sysmodule
@@ -24,21 +26,25 @@ jobs:
           export DEVKITPRO=/opt/devkitpro
           cd software/rumble-tap-sysmodule
           make -j$(nproc)
-      - name: Upload artifact
+      - name: Package for SD card
+        run: |
+          NSP=$(find software/rumble-tap-sysmodule -maxdepth 1 -name '*.nsp' | head -1)
+          DEST="dist/atmosphere/contents/${TITLE_ID}"
+          mkdir -p "${DEST}/flags"
+          cp "${NSP}" "${DEST}/exefs.nsp"
+          : > "${DEST}/flags/boot2.flag"
+      - name: Upload SD-ready package
         uses: actions/upload-artifact@v4
         with:
-          name: rumble-tap-sysmodule
-          path: |
-            software/rumble-tap-sysmodule/*.nsp
-            software/rumble-tap-sysmodule/*.nso
-            software/rumble-tap-sysmodule/*.npdm
+          name: rumble-tap-sysmodule-SD
+          path: dist
 
-  # Work-in-progress: the libstratosphere hid MITM that logs what a *game* sends.
-  # Allowed to fail while we iterate the build from CI logs.
+  # The libstratosphere hid MITM that logs what a *game* sends.
   rumble-logger-mitm:
     runs-on: ubuntu-latest
     container: devkitpro/devkita64:latest
-    continue-on-error: true
+    env:
+      TITLE_ID: "0100000000ABE200"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,10 +54,15 @@ jobs:
           export DEVKITPRO=/opt/devkitpro
           cd software/rumble-logger-mitm
           make -j$(nproc)
-      - name: Upload artifact
-        if: success()
+      - name: Package for SD card
+        run: |
+          NSP=$(find software/rumble-logger-mitm/out -name '*.nsp' | head -1)
+          DEST="dist/atmosphere/contents/${TITLE_ID}"
+          mkdir -p "${DEST}/flags"
+          cp "${NSP}" "${DEST}/exefs.nsp"
+          : > "${DEST}/flags/boot2.flag"
+      - name: Upload SD-ready package
         uses: actions/upload-artifact@v4
         with:
-          name: rumble-logger-mitm
-          path: |
-            software/rumble-logger-mitm/**/*.nsp
+          name: rumble-logger-mitm-SD
+          path: dist

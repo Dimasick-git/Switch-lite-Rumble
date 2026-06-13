@@ -72,6 +72,11 @@ Two transports are on the table (full discussion in
    slot and carries the actuator: the cleanest "plug it in and it just works" form
    factor. The hard part is getting the slot to power and talk to a non-original
    device, which is gated by the **Lotus3** controller.
+   - **Power progress:** the game-card rail can be driven at runtime over I²C — a
+     homebrew overlay was shown setting the **GCA** domain to **3100 mV** (the
+     cartridge 3.1 V rail). Control code is in [`software/gc-power/`](./software/gc-power/)
+     (thanks to Cooler3D / 4IFIR). Still open: whether this powers the physical slot
+     pins or only Lotus3.
 2. **External / USB-C or Bluetooth — the fallback.** The same sysmodule forwards the
    captured values to an external actuator. Not as elegant, but it sidesteps the
    slot entirely and is testable today.
@@ -193,6 +198,16 @@ I, Dimasick-git, can do reverse engineering, but I need help:
 reply on the project's discussion thread:
 
 - **GBAtemp thread:** https://gbatemp.net/threads/nintendo-switch-lite-rumble.682407/
+
+---
+
+## Acknowledgements
+
+- **Cooler3D** — runtime game-card power-rail control (from the 4IFIR project),
+  which powers the cartridge slot at 3.1 V. See [`software/gc-power/`](./software/gc-power/).
+  Only the game-card power domains were used; the author's audio/equalizer work and
+  unrelated registers are intentionally not included.
+- **sabogalc** — MIG Dumper/Flashcart PCB reference files ([`hardware/`](./hardware/)).
 
 ---
 
