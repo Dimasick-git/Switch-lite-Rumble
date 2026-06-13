@@ -1,28 +1,30 @@
 /*
- * rumble-tap-sysmodule — milestone 1 PoC
+ * rumble-tap-sysmodule — milestone 1 PoC + logger
  *
  * A background sysmodule that brings up the hid vibration API and proves the
- * read/output loop: it polls input and, on a button combo, emits a debug log
- * line and a short vibration burst to any connected vibration-capable controller.
+ * read/output loop end to end, writing a log file to the SD card so results can
+ * be shared. On the L + R combo it logs an event and sends a short vibration
+ * burst to any connected vibration-capable controller.
  *
- * This is the "first win" from docs/DESIGN-NOTES.md §8: confirm a custom sysmodule
- * loads, runs, reads hid, and can drive the vibration API. The real goal —
- * capturing the vibration values a *game* sends — is milestone 2 and needs a
- * libstratosphere MITM of the hid service (see software/README.md). This file
- * deliberately stays on plain libnx so it's the simplest possible starting point.
+ * IMPORTANT honesty note: plain libnx CANNOT see the vibration values a *game*
+ * emits to another controller — that requires a hid MITM (see
+ * ../rumble-logger-mitm/). This module proves the pipeline and the output path,
+ * and logs its own activity. The game-capture logging is the MITM module's job.
  *
- * NOTE: scaffold. Not yet built against devkitPro or run on hardware.
+ * Log file: sdmc:/rumble-tap.log
+ *
+ * NOTE: scaffold. Built in CI (devkitPro) but not yet run on hardware.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <switch.h>
 
 /* ---- sysmodule runtime configuration ---------------------------------- */
 
-/* Run as a pure background sysmodule (no applet, no main-thread services). */
 u32 __nx_applet_type = AppletType_None;
-u32 __nx_fs_num_sessions = 0;
+u32 __nx_fs_num_sessions = 1; /* needed for SD-card logging via fsdev */
 
 #define INNER_HEAP_SIZE 0x80000
 size_t nx_inner_heap_size = INNER_HEAP_SIZE;
@@ -36,7 +38,6 @@ void __libnx_initheap(void)
     fake_heap_end   = nx_inner_heap + nx_inner_heap_size;
 }
 
-/* Bring up only the services we actually need. Keeps the footprint small. */
 void __appInit(void)
 {
     Result rc;
@@ -45,16 +46,36 @@ void __appInit(void)
     if (R_FAILED(rc))
         diagAbortWithResult(MAKERESULT(Module_Libnx, LibnxError_InitFail_SM));
 
+    rc = fsInitialize();
+    if (R_FAILED(rc))
+        diagAbortWithResult(rc);
+
     rc = hidInitialize();
     if (R_FAILED(rc))
         diagAbortWithResult(rc);
 
-    smExit(); /* sm is only needed to open the other services */
+    fsdevMountSdmc();
+
+    smExit(); /* sm only needed to open the other services */
 }
 
 void __appExit(void)
 {
+    fsdevUnmountAll();
     hidExit();
+    fsExit();
+}
+
+/* ---- logging ---------------------------------------------------------- */
+
+static void log_line(const char *msg)
+{
+    FILE *f = fopen("sdmc:/rumble-tap.log", "a");
+    if (f == NULL)
+        return;
+    u64 tick = armGetSystemTick();
+    fprintf(f, "[%lu] %s\n", tick, msg);
+    fclose(f);
 }
 
 /* ---- vibration helpers ------------------------------------------------ */
@@ -64,8 +85,6 @@ static HidVibrationValue g_value_stop[2];
 
 static void rumble_init(void)
 {
-    /* Handheld first; on a Lite this maps to the (absent) built-in motors, but
-     * the call is harmless and lets us reuse the same path for paired pads. */
     hidInitializeVibrationDevices(g_vibration_handles, 2,
                                   HidNpadIdType_Handheld,
                                   HidNpadStyleTag_NpadHandheld);
@@ -101,15 +120,15 @@ int main(int argc, char *argv[])
     padInitializeDefault(&pad);
 
     rumble_init();
+    log_line("rumble-tap: started");
 
     while (true) {
         padUpdate(&pad);
         u64 down = padGetButtonsDown(&pad);
 
-        /* First-win trigger: L + R together. Replace with the real capture
-         * once the hid MITM (milestone 2) is in place. */
+        /* L + R: log an event and pulse any vibration-capable controller. */
         if ((down & HidNpadButton_L) && (down & HidNpadButton_R)) {
-            svcOutputDebugString("rumble-tap: trigger\n", 20);
+            log_line("rumble-tap: trigger (L+R) -> burst");
             rumble_burst(0.5f);
         }
 

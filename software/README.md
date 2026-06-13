@@ -11,7 +11,12 @@ game-card slot or any protection.
 | Path | What it is |
 | :--- | :--- |
 | [`DEPENDENCIES.md`](./DEPENDENCIES.md) | Toolchain + every library needed, with install commands and links |
-| [`rumble-tap-sysmodule/`](./rumble-tap-sysmodule/) | The sysmodule project skeleton (Makefile + sources). **Scaffold — not yet built.** |
+| [`rumble-tap-sysmodule/`](./rumble-tap-sysmodule/) | **libnx** PoC: proves the sysmodule loads, drives the vibration API, and logs to `sdmc:/rumble-tap.log`. Built in CI. |
+| [`rumble-logger-mitm/`](./rumble-logger-mitm/) | **libstratosphere `hid` MITM** that logs the vibration a *game* emits to `sdmc:/rumble-logger.log` and forwards it untouched. The real capture tool — **WIP, CI-gated.** |
+
+Both are built automatically on push by [`.github/workflows/build.yml`](../.github/workflows/build.yml).
+The libnx PoC is the reliable baseline; the MITM logger is the active target whose
+build is being brought to green in CI.
 
 ## Milestones (matches the step plan)
 

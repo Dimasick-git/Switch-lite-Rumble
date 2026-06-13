@@ -1,0 +1,3 @@
+[submodule "software/rumble-logger-mitm/libstratosphere"]
+	path = software/rumble-logger-mitm/libstratosphere
+	url = https://github.com/Atmosphere-NX/Atmosphere-libs
