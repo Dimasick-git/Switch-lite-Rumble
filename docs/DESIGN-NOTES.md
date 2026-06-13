@@ -1,280 +1,269 @@
-# Заметки по проектированию и принятые решения
+# Design notes & decisions
 
-*Сводка обсуждения между участниками проекта. Извлечено из рабочей переписки.*
+*Summary of the project discussion, distilled from working chats.*
 
-> **English abstract.** This is the design-decision log distilled from the team's
-> (Russian-language) discussion. It records the two architectures debated
-> (in-slot cartridge emulation vs. external/sysmodule dongle), the technical facts
-> established, what was agreed as the first step, and the open questions. The two
-> source design docs live alongside this file in [`docs/`](.).
-
----
-
-## 0. Какую задачу мы реально решаем (не потерять фокус)
-
-Эксперимент подтвердил: **сигнал вибрации на Lite живой и тривиально отправляется**
-из homebrew/оверлея — сопряжённый Joy-Con вибрирует. Из этого легко сделать
-неправильный вывод «проект бессмысленный». Это не так — просто цель надо
-сформулировать точно:
-
-> **Смысл проекта — не «оживить сигнал» (он всегда был), а дать актуатор, который
-> чувствуешь, играя на Lite как на портативке, НЕ держа и НЕ вживляя целые Joy-Con.**
-
-Прямые следствия, которые определяют всю архитектуру:
-
-1. **Вибрация сопряжённого Joy-Con помогает, только пока ты его держишь** — а это
-   убивает смысл «всё в одном корпусе». Поэтому «оно и так вибрирует» ≠ решение.
-2. **Если вживлять настоящую вибро-начинку Joy-Con внутрь (Путь C) — кастомный софт
-   не нужен вообще.** Консоль сама ведёт сопряжённый Joy-Con. Это уже рабочее, но
-   колхозное решение.
-3. **Сисмодуль/MITM оправдан ровно в одном случае — если ведём НЕ-Joy-Con актуатор**
-   (например Taptic), с которым консоль не умеет говорить сама. Только тогда есть
-   смысл перехватывать rumble из игры.
-4. **Защитимая ценность над «просто засунь Joy-Con внутрь» = plug-and-play + малый
-   размер + без вскрытия консоли и без жертвы двух Joy-Con.** Если наш модуль
-   требует той же пайки, что и Путь C — Путь C выигрывает.
-5. **Слотовый путь (картридж в слоте) — целевой форм-фактор.** Самое красивое
-   «вставил — работает», без вскрытия консоли. Главная сложность — питание из слота
-   (см. §12). Если по железу не сложится — внешний донгл даёт тот же результат
-   запасным путём.
-
-Вывод по фокусу: целимся в **картридж в слоте с собственным актуатором (L/R)**,
-управляемый сисмодулем-перехватчиком; внешний USB-C/BT держим как подстраховку.
-Подробно про сами актуаторы — в [`HAPTICS.md`](./HAPTICS.md).
+> Records the architectures debated (in-slot cartridge vs. external/sysmodule
+> dongle), the technical facts established, what was agreed as the first step, and the
+> open questions. The two source design docs live alongside this file in
+> [`docs/`](.).
 
 ---
 
-## 1. О чём вообще спор: две архитектуры
+## 0. What the project actually solves (keep focus)
 
-В ходе обсуждения оформились **три пути**, и важно их не путать.
+Experiment confirmed: **the vibration signal on a Lite is live and trivially
+sendable** from homebrew/an overlay — a paired Joy-Con vibrates. It's easy to wrongly
+conclude "the project is pointless." It isn't — the goal just has to be stated
+precisely:
 
-### Путь A — «через слот» (эмуляция картриджа, как у MIG Switch)
-Устройство-картридж вставляется в слот, прикидывается настоящим картриджем,
-получает питание из слота и шлёт/принимает вибро-данные по шине картриджа.
-Подробно расписан в [`slot-approach-technical-spec.md`](./slot-approach-technical-spec.md).
+> **The point isn't to "revive the signal" (it always existed); it's to provide an
+> actuator you feel while playing the Lite as a handheld, without holding or
+> embedding whole Joy-Cons.**
 
-- **Плюс:** красивый «настоящий картридж», единый форм-фактор, ничего не торчит.
-- **Минус:** чтобы слот дал питание и не выключился, нужно разобраться с Lotus3 и его
-  инициализацией/гейтингом питания — это технически самый тяжёлый узел проекта (его
-  я веду сам, см. §12).
+Direct consequences that drive the whole architecture:
 
-### Путь B — внешний/сисмодульный (донгл)
-Кастомный сисмодуль ловит вибрацию в `hid` и форвардит её по **USB-C/Bluetooth**
-на внешнее устройство (ESP32 + актуатор). Слот **не задействован вообще**.
-Подробно — в [`concept-external-approach.md`](./concept-external-approach.md).
+1. **A paired Joy-Con's vibration only helps while you hold it** — which kills the
+   "all in one body" point. So "it already vibrates" ≠ a solution.
+2. **Embedding real Joy-Con haptics inside (Path C) needs no custom software at all.**
+   The console drives the paired Joy-Con itself. A working but crude solution.
+3. **A sysmodule/MITM is justified in exactly one case — driving a non-Joy-Con
+   actuator** (e.g. a Taptic engine) the console can't talk to itself. Only then is
+   intercepting the game's rumble worthwhile.
+4. **The defensible value over "just stuff a Joy-Con inside" = plug-and-play + small
+   size + no console surgery and no sacrificing two Joy-Cons.** If the module needs
+   the same soldering as Path C, Path C wins.
+5. **The in-slot cartridge is the target form factor.** The cleanest "plug it in and
+   it works," with no console surgery. The main difficulty is slot power (see §12). If
+   that doesn't pan out in hardware, the external dongle gives the same result via the
+   fallback.
 
-- **Плюс:** просто, тестируется уже сегодня, не упирается в Lotus3.
-- **Минус:** форм-фактор «донгл», а не идеальный картридж в слоте.
-
-### Путь C — физический трансплант Joy-Con (известное prior art)
-Никакого софта и реверса: внутрь корпуса Lite **физически встраиваются Joy-Con**
-(или их вибромоторы), вибрация идёт от них как от штатно сопряжённых контроллеров.
-Требует механической доработки — перенести несколько кнопок, допаять стойки в
-корпусе. Это реально собранный кем-то прототип (см. §11 «Источники»), демо: нажатие
-кнопки → вибрация.
-
-- **Плюс:** работает «из коробки», без прошивки и без обхода чего-либо — консоль
-  просто шлёт rumble сопряжённым Joy-Con, а они физически внутри.
-- **Минус:** колхозная сборка, занимает место двух Joy-Con, не plug-and-play, нужно
-  вскрывать и паять консоль. Не наша цель (картридж/донгл), но это **важный
-  ориентир и доказательство ключевого факта** ниже.
+Focus: aim for a **cartridge in the slot with its own actuator (L/R)**, driven by a
+capture sysmodule; keep external USB-C/BT as the backup. Actuator detail in
+[`HAPTICS.md`](./HAPTICS.md).
 
 ---
 
-## 2. Ключевой технический факт, на котором всё держится
+## 1. The debate: three architectures
 
-**Rumble-конвейер на Switch Lite НЕ вырезан.** Lite штатно работает с внешними
-Joy-Con / Pro Controller, у которых есть вибрация, поэтому подсистема `hid`
-**вычисляет vibration-значения как обычно** — просто во встроенном корпусе нет
-актуатора. Сигнал живой, его можно перехватить. Это делает Путь B реалистичным
-без всякого реверса проприетарной шины.
+Three paths emerged; it's important not to conflate them.
 
-**Подтверждение от Пути C (важно и с оговоркой).** Контакт, собравший трансплант,
-подтвердил: **сопряжённые Joy-Con на Lite вибрируют штатно**. То есть rumble на
-внешние/сопряжённые контроллеры точно проходит. **НО** это не доказывает, что
-встроенный handheld-npad получает vibration-значения — Joy-Con в его сборке это
-по-прежнему *внешние* контроллеры, просто засунутые внутрь. Изначальное опасение
-(«в портативном режиме вибрация заглушена») этим **не закрыто**: открытый вопрос
-именно про handheld-npad без мотора (см. §9, п.2 и [`../RESEARCH.md`](../RESEARCH.md)
-§12.1) остаётся — проверяется только на железе.
+### Path A — through the slot (cartridge emulation, like MIG Switch)
+A cartridge device sits in the slot, pretends to be a real card, draws power from the
+slot, and sends/receives vibration data over the cartridge bus. Detailed in
+[`slot-approach-technical-spec.md`](./slot-approach-technical-spec.md).
 
----
+- **Plus:** a clean "real cartridge," one form factor, nothing sticking out.
+- **Minus:** getting the slot to power up and not cut off means dealing with Lotus3
+  and its init / power-gating — the technically hardest node of the project (see §12).
 
-## 3. Что установили про защиту слота (Lotus3)
+### Path B — external / sysmodule (dongle)
+A custom sysmodule catches the vibration in `hid` and forwards it over **USB-C /
+Bluetooth** to an external device (ESP32 + actuator). The slot is **not used at all**.
+Detailed in [`concept-external-approach.md`](./concept-external-approach.md).
 
-- Картридж управляется ASIC **Lotus3**; процессор-переходник **почти каждую мс**
-  шлёт запрос подлинности.
-- Чтобы консоль «съела» устройство, нужно ответить на **CMD60 с OperationId
-  0x0E** и выдать корректный, **подписанный Nintendo заголовок игры (HACR)**. Без
-  валидной **RSA-подписи** заголовка консоль вообще не начинает общение.
-- Если аутентификация провалена — Lotus3 **отключает питание** и переводит шину в
-  ошибку.
-- Вывод по слоту: подделать подпись нельзя. Теоретически остаётся либо софт-патч
-  `fs` (заставить систему не гейтить питание при ошибке), либо MITM-трюки — но это
-  и есть тот самый обход, который роднит проект с флешкартой. **Поэтому как первый
-  шаг слот не берём.**
+- **Plus:** simple, testable today, doesn't hit Lotus3.
+- **Minus:** a "dongle" form factor, not the ideal in-slot cartridge.
 
----
+### Path C — physical Joy-Con transplant (known prior art)
+No software or RE: **Joy-Cons (or their vibro motors) are physically embedded** in the
+Lite shell, and the vibration comes from them as normally-paired controllers. Needs
+mechanical work — relocating a few buttons, soldering standoffs in the shell. Someone
+actually built this prototype (see §11 "Sources"); demo: button press → vibration.
 
-## 4. Прибор-ориентир: MIG Switch (разобрали по чипам)
-
-Чтобы понимать, что вообще нужно для жизни в слоте, разобрали MIG:
-
-- **Главный чип — FPGA Microsemi IGLOO2**, модели **M2GL010** или **M2GL025**.
-  Товарищ подтвердил: в его MIG Switch стоит именно **IGLOO2 M2GL010**.
-  *(Это уточняет более ранний ресёрч, где предполагался iCE40 — см.
-  [`../RESEARCH.md`](../RESEARCH.md). В этой ревизии железа — IGLOO2.)*
-- **Вспомогательный чип — ESP32-S3.** Отвечает за MicroSD-карту, обновление
-  прошивки и заливку конфигурации в FPGA при включении.
-- **Важный вывод:** значительная часть железа MIG (USB, работа с каталогами,
-  microSD) нашему вибро-проекту **не нужна**. Тащить целиком плату MIG смысла нет
-  — она «не экономит место от слова совсем». Для прототипа/тестов сгодится, для
-  финала — **своя плата с нуля**.
-- Открытый вопрос: нужен ли ESP32 вообще, или для нашей узкой задачи хватит одного
-  FPGA. Надо разобрать, что именно делает каждый чип.
+- **Plus:** works out of the box, no firmware and no bypass of anything — the console
+  just sends rumble to paired Joy-Cons that happen to be inside.
+- **Minus:** a crude build, takes the space of two Joy-Cons, not plug-and-play, needs
+  opening and soldering the console. Not the goal (cartridge/dongle), but an
+  **important reference and proof of the key fact** below.
 
 ---
 
-## 5. Питание (идея из обсуждения)
+## 2. The key fact everything rests on
 
-- В спеке слотового пути изначально считалось питание от 3.1 В. В переписке
-  уточнили: **запитаться можно и от 1.8 В**.
-- Предложенная схема: **контроллер питать от 1.8 В через резистор** (этого ему
-  точно хватит), **моторчик — от 3.1 В через небольшой конденсатор**.
-- В любом случае пик актуатора (>300 мА) выше лимита слота → нужен буфер
-  (ионистор/мелкий АКБ/конденсатор), подзаряжаемый в простое.
+**The rumble pipeline on a Switch Lite is NOT removed.** The Lite works normally with
+external Joy-Con / Pro Controllers that have vibration, so the `hid` subsystem
+**computes vibration values as usual** — there's just no actuator in the built-in
+body. The signal is live and can be intercepted. That makes Path B realistic without
+any reverse engineering of the proprietary bus.
 
----
-
-## 6. Актуатор (вибромотор)
-
-- Кандидат №1 — **Taptic Engine от iPhone 12**. Аргументы: хорошее соотношение
-  размер/качество вибры, мощная но гибкая отдача, теоретически тянет HD-подобную
-  вибрацию. Продаётся на AliExpress. Достаточно тонкий — есть пример, где его
-  уместили между платой и корпусом Lite.
-- Критерий выбора: «не пукалка для галочки», но и **мало потребляющий**, и
-  влезающий по размеру (вибро + чип + микроконтроллер — всё в габарите картриджа).
+**Confirmation from Path C (important, with a caveat).** The contact who built the
+transplant confirmed: **paired Joy-Cons on a Lite vibrate normally**. So rumble to
+external/paired controllers definitely goes through. **BUT** that does not prove the
+built-in handheld npad receives vibration values — the Joy-Cons in that build are
+still *external* controllers, just placed inside. The original worry ("vibration is
+muted in handheld mode") is **not** closed by this: the open question is specifically
+about the motorless handheld npad (see §9 #2 and
+[`../RESEARCH.md`](../RESEARCH.md) §12.1) — answerable only on hardware.
 
 ---
 
-## 7. Форм-фактор корпуса
+## 3. What's established about the slot protection (Lotus3)
 
-- Размер стандартного картриджа очень мал, но **повторять его 1:1 не обязательно**.
-  Главное — чтобы влезало внутрь и крышка закрывалась.
-- Договорённость: **верх можно наращивать**, низ лучше не трогать. Сверху места
-  оказалось даже больше, чем ожидали.
-- Точные мерки картриджа запрошены у товарища; в сети есть габариты и 3D-модели
-  (см. также [`../CHIPS.md`](../CHIPS.md) — раздел про физический конверт).
-
----
-
-## 8. Что РЕШИЛИ делать первым (договорённость)
-
-Несмотря на спор о финальном железе, по первому шагу сошлись:
-
-> **Шаг 1 — софт.** Написать хомбрю/сисмодуль, который ловит сигнал в `hid`
-> (для начала хотя бы по нажатию кнопки) и отдаёт его наружу — например, на
-> внешнее устройство, зажечь светодиод / крутануть тестовый мотор. Это
-> «первая победа», чисто софтовая, тестируется на живой консоли, **не зависит от
-> слота и от Lotus3.**
-
-Дальше: форвардинг значений на ESP32 → реальный актуатор → маппинг HD-rumble →
-корпус. Сложность проекта оценили как **среднюю** («на троечку», не со звёздочкой):
-основной риск не в гениальности кода, а в цикле «правка → тест на железе → разбор».
-
-Решение «начать с простого» — финальное на текущий момент («что-то я разогнался»),
-слотовый путь отложен, но не выброшен: если/когда появится рабочий вариант обхода
-питания **без** обхода защиты контента — к нему можно вернуться.
+- The card is managed by the **Lotus3** ASIC; the bridge processor sends an
+  authenticity request **almost every ms**.
+- For the console to accept a device, it must answer **CMD60 with OperationId 0x0E**
+  and present a correct, **Nintendo-signed game header (HACR)**. Without a valid
+  **RSA signature** on the header the console won't even start talking.
+- On authentication failure, Lotus3 **cuts power** and puts the bus into an error
+  state.
+- Slot takeaway: the signature can't be forged. In theory what remains is either an
+  `fs` software patch (make the system not power-gate on error) or MITM tricks — but
+  that's the same circumvention that makes the project resemble a flashcart, so the
+  slot isn't taken as the *first* step.
 
 ---
 
-## 8a. Уточнения по API (проверено)
+## 4. Reference device: MIG Switch (chip teardown)
 
-Несколько технических деталей из ранних документов уточнены по switchbrew/libnx:
+To understand what's actually needed to live in the slot, MIG was broken down:
 
-- **Command ID вибрации в сервисе `hid`** в исходной спеке были указаны как 153/154 —
-  **это неверно**. Реальные ID: **`SendVibrationValue` = 201**, **`SendVibrationValues`
-  = 206** (также `GetVibrationDeviceInfo` = 200, `GetActualVibrationValue` = 202,
+- **Main chip — Microsemi IGLOO2 FPGA**, model **M2GL010** or **M2GL025**. A teardown
+  confirmed an **IGLOO2 M2GL010** in a real MIG Switch. *(This corrects earlier
+  research that assumed iCE40 — see [`../RESEARCH.md`](../RESEARCH.md). This hardware
+  revision is IGLOO2.)*
+- **Helper chip — ESP32-S3.** Handles the microSD card, firmware update, and loading
+  the FPGA config at power-on.
+- **Key takeaway:** much of MIG's hardware (USB, file catalogs, microSD) is **not
+  needed** for the rumble project. Carrying the whole MIG board makes no sense — it
+  "doesn't save space at all." Fine for a prototype/tests; for the final build, a
+  **board from scratch**.
+- Open question: is the ESP32 needed at all, or does the FPGA alone suffice for this
+  narrow task? Needs working out what each chip actually does.
+
+---
+
+## 5. Power (idea from the discussion)
+
+- The slot-path spec originally assumed 3.1 V power. The chat clarified: **you can
+  also power from 1.8 V**.
+- Proposed scheme: **power the controller from 1.8 V through a resistor** (plenty for
+  it), **the motor from 3.1 V through a small capacitor**.
+- Either way the actuator peak (>300 mA) exceeds the slot budget → a buffer is needed
+  (supercap / small battery / capacitor), trickle-charged while idle.
+
+---
+
+## 6. Actuator (vibro motor)
+
+- Candidate #1 — the **iPhone 12 Taptic Engine**. Reasons: good size/quality ratio,
+  strong but controllable feedback, capable of HD-like vibration in theory. Sold on
+  AliExpress. Thin enough — there's an example fitting it between the board and the
+  Lite shell.
+- Selection criterion: "not a token buzz," yet **low-power** and small enough (vibro +
+  chip + microcontroller all within the cartridge envelope).
+
+---
+
+## 7. Shell form factor
+
+- A standard cartridge is very small, but it **doesn't have to be matched 1:1**. What
+  matters is that everything fits inside and the lid closes.
+- Agreement: **the top can be extended**, the bottom is best left alone. There turned
+  out to be more room up top than expected.
+- Exact cartridge measurements were requested from a contact; dimensions and 3D models
+  exist online (see also [`../CHIPS.md`](../CHIPS.md), the physical-envelope section).
+
+---
+
+## 8. What was agreed as the first step
+
+Despite the debate over final hardware, the first step was agreed:
+
+> **Step 1 — software.** Write a homebrew/sysmodule that catches the signal in `hid`
+> (at first even on a button press) and emits it outward — e.g. to an external device,
+> light an LED / spin a test motor. A pure-software "first win," testable on a live
+> console, **independent of the slot and Lotus3.**
+
+Then: forward the values to an ESP32 → real actuator → HD-rumble mapping → enclosure.
+Project difficulty rated **medium**: the main risk isn't code brilliance but the
+"edit → test on hardware → analyze" loop.
+
+"Start simple" is the current decision; the slot path is deferred but not dropped.
+
+---
+
+## 8a. API corrections (verified)
+
+A few details from early documents corrected against switchbrew/libnx:
+
+- **`hid` vibration command IDs** were listed in the original spec as 153/154 — **that
+  is wrong**. The real IDs: **`SendVibrationValue` = 201**, **`SendVibrationValues` =
+  206** (also `GetVibrationDeviceInfo` = 200, `GetActualVibrationValue` = 202,
   `CreateActiveVibrationDeviceList` = 203, `SendVibrationValueInBool` = 212).
-- **FPGA в MIG** — IGLOO2 M2GL010, не iCE40 (см. §4).
-- libnx ≥ 4.0.0: хэндлы вибрации — это структуры (`HidVibrationDeviceHandle`), а
-  `HidVibrationValue` содержит `{ amp_low, freq_low, amp_high, freq_high }`.
+- **MIG's FPGA** — IGLOO2 M2GL010, not iCE40 (see §4).
+- libnx ≥ 4.0.0: vibration handles are structs (`HidVibrationDeviceHandle`), and
+  `HidVibrationValue` holds `{ amp_low, freq_low, amp_high, freq_high }`.
 
-## 9. Открытые вопросы (что реверсить дальше)
+## 9. Open questions (what to reverse next)
 
-1. **Где именно в `hid`** писать перехват vibration-значений активного игрока.
-2. **Заполняет ли Lite** vibration device встроенного хэндхелд-контроллера, или
-   надо регистрировать виртуальный контроллер, чтобы игра слала ему rumble.
-   *(Уточнение из round-2 ресёрча: у встроенного контроллера Lite мотора нет вообще,
-   игры шлют rumble по обычному HID npad, а чувствуют его только внешние контроллеры.
-   Вопрос сводится к тому, вызывает ли игра `SendVibrationValues` для handheld-npad
-   несмотря на отсутствие мотора — если да, MITM ловит напрямую; если нет, нужен
-   виртуальный контроллер. Проверяется только на железе. См.
-   [`../RESEARCH.md`](../RESEARCH.md) §12.1.)*
-3. **Латентность** канала (USB vs BT), чтобы вибра не отставала.
-4. **Маппинг HD-rumble** (амплитуда/частота) на конкретный актуатор (Taptic).
-5. По слотовому пути: есть ли у Lotus3 **аппаратный тайм-аут** на питание без
-   успешной инициализации (определяет, выживет ли вообще софт-патч `fs`).
-6. Что именно делает **каждый чип** в MIG и можно ли обойтись без ESP32.
+1. **Where exactly in `hid`** to tap the active player's vibration values.
+2. **Does the Lite populate** the built-in handheld controller's vibration device, or
+   must a virtual controller be registered for the game to send it rumble.
+   *(Round-2 research: the Lite's built-in controller has no motor at all; games send
+   rumble over the standard HID npad, and only external controllers feel it. The
+   question reduces to whether a game calls `SendVibrationValues` for the handheld npad
+   despite the missing motor — if yes, the MITM catches it directly; if no, a virtual
+   controller is needed. Hardware-only. See [`../RESEARCH.md`](../RESEARCH.md) §12.1.)*
+3. **Channel latency** (USB vs BT), so the vibration doesn't lag.
+4. **HD-rumble mapping** (amplitude/frequency) onto the chosen actuator (Taptic).
+5. On the slot path: does Lotus3 have a **hardware timeout** on power without
+   successful init (decides whether an `fs` software patch can even survive).
+6. What **each chip** in MIG actually does, and whether the ESP32 can be dropped.
 
-Инструменты поиска ответов: **switchbrew wiki + исходники libnx/Atmosphere +
-эксперименты на железе** (а не дизассемблер проприетарной шины).
-
----
-
-## 10. Участники
-
-- **Dimasick-git** — реверс-инжиниринг и железо. Автор мода **LED-панели для Switch
-  Lite** (опыт с моделью **HOAG**), ведёт репозиторий, пишет сисмодуль и примеры
-  кода. (Это один человек — тот же, кто занимается RE и примерами; отдельного
-  «привлечённого специалиста» в команде нет.)
-- **Друг** — программист, соавтор идеи и реализации.
-
-Данные по разбору MIG Switch (чип IGLOO2 M2GL010) предоставил знакомый-владелец
-такого устройства — как источник информации, не как участник.
+Answer tools: **switchbrew wiki + libnx/Atmosphere sources + hardware experiments**
+(not a disassembler of the proprietary bus).
 
 ---
 
-## 11. Источники / контакты
+## 10. Maintainers
 
-- **Знакомый-владелец MIG Switch** — предоставил чип/данные по IGLOO2 M2GL010 (§4).
-- **Анонимный контакт (Путь C, трансплант Joy-Con)** — ранее самостоятельно собрал
-  портативный прототип Lite со встроенными Joy-Con (вибрация от сопряжённых
-  контроллеров, перенос кнопок, допайка стоек в корпусе; было демо-видео — нажатие
-  кнопки → вибрация). Дал ценное подтверждение, что сопряжённые Joy-Con на Lite
-  вибрируют штатно (§2). **Исходника/прошивки нет** (подход чисто механический),
-  GitHub-аккаунта нет; **от указания в соавторах отказался и имени не назвал** —
-  поэтому записан как анонимный источник, не как контрибьютор/автор. Если он позже
-  согласится — добавим по его условиям.
+Maintained by a small group of contributors (reverse engineering + hardware, with a
+programmer on implementation). Background includes an **LED-panel mod for the Switch
+Lite** (HOAG model). Specific external sources are credited below and in
+[`../RESEARCH.md`](./../RESEARCH.md).
 
 ---
 
-## 12. Консультация (Cooler3D) — ключевые тезисы
+## 11. Sources / contacts
 
-Разбор от автора 4IFIR (предоставил код управления GC-рейлом):
+- **A MIG Switch owner** — provided the chip/data on IGLOO2 M2GL010 (§4).
+- **An anonymous contact (Path C, Joy-Con transplant)** — previously built a handheld
+  Lite prototype with embedded Joy-Cons (vibration from paired controllers, relocated
+  buttons, soldered standoffs; there was a demo video — button press → vibration).
+  Gave the valuable confirmation that paired Joy-Cons on a Lite vibrate normally (§2).
+  **No source/firmware** (a purely mechanical approach), no GitHub account; **declined
+  a co-author credit and gave no name** — so recorded as an anonymous source, not a
+  contributor/author. If they later agree, they'll be added on their terms.
 
-- **Модель Lite в HOS:** Lite — это планшет, как и остальные модели; «тушка» не
-  вибрирует, вибрируют подключённые геймпады. Встроенный контроллер система видит как
-  нечто среднее между **проводным геймпадом без вибрации** и доп-кнопками на корпусе.
-  → Подтверждает наш §2: сигнал считается, актуатора нет.
-- **Слот как источник питания — под вопросом по токам/напряжениям.** «LD-домены — не
-  универсальная розетка»: не факт, что GC-рейл потянет актуатор по току. Это ровно
-  наш открытый вопрос (питает ли GCA сами контакты слота и хватит ли тока) —
-  проверяется на железе.
-- **Сигнальные линии слота** в принципе годятся, чтобы «завернуть» в них MITM
-  вибро-стека через драйвер-интерпретатор (на стороне 4IFIR). Альтернативный взгляд
-  на транспорт; держим в уме.
-- **⚑ Важно для актуатора:** «без разделения на **левый/правый домен** полноценной
-  вибрации не построить». То есть один актуатор, в который свёрнуты обе стороны, даёт
-  упрощённую отдачу; для «настоящей» нужно **два актуатора (L и R)**, и поток вибрации
-  надо **сохранять раздельно по сторонам**. Практический вывод: логгер уже пишет
-  значения **по каждому хэндлу отдельно** (хэндл кодирует позицию/сторону), так что
-  L/R-разделение в логе **сохраняется** — не схлопывать его раньше времени.
-- **Хардмод-предпочтение Cooler3D:** компактные вибро-элементы «с пуговицу», слот —
-  как питание (с оговоркой выше).
+---
 
-### Питание слота — направления
-Чтобы заставить слот дать питание, есть два направления: (1) правки `fs` по аналогии
-с MIG, (2) работа с Lotus3 и его шиной на уровне сисмодуля. Это часть, которую я
-веду сам — детали и прогресс держу в [`slot-approach-technical-spec.md`](./slot-approach-technical-spec.md).
-Параллельно есть запасной путь, не завязанный на слот, — внешний USB-C/BT (Путь B).
+## 12. Consultation (Cooler3D) — key points
+
+Analysis from the author of 4IFIR (who provided the GC-rail control code):
+
+- **The Lite in HOS:** the Lite is a tablet like the other models; the body doesn't
+  vibrate, connected gamepads do. The system sees the built-in controller as something
+  between a **wired gamepad without vibration** and extra body buttons. → Confirms §2:
+  the signal is computed, the actuator is missing.
+- **Slot as a power source — uncertain on current/voltage.** "LD domains aren't a
+  universal outlet": it's not certain the GC rail can drive the actuator by current.
+  This is exactly the open question (does GCA power the slot pins, and is there enough
+  current) — answerable on hardware.
+- **The slot's signal lines** could in principle carry a MITM of the vibration stack
+  via a driver-interpreter (on the 4IFIR side). An alternative transport view; kept in
+  mind.
+- **⚑ Important for the actuator:** "without left/right domain separation you can't
+  build *full* vibration." A single actuator with both sides collapsed gives a
+  simplified feel; for "real" vibration you need **two actuators (L and R)**, and the
+  vibration stream must be **kept split per side**. Practical note: the logger already
+  writes values **per handle** (the handle encodes position/side), so **L/R separation
+  is preserved** in the log — don't collapse it prematurely.
+- **Cooler3D's hardmod preference:** compact "button-sized" vibro elements, slot as
+  power (with the caveat above).
+
+### Slot power — directions
+To make the slot deliver power, two directions exist: (1) `fs` edits by analogy with
+MIG, (2) working with Lotus3 and its bus at the sysmodule level. This is the project's
+hardest open piece; progress is tracked in
+[`slot-approach-technical-spec.md`](./slot-approach-technical-spec.md). In parallel
+there's a backup path not tied to the slot — external USB-C/BT (Path B).

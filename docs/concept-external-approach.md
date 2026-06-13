@@ -1,111 +1,138 @@
-# Вибро-мод для Nintendo Switch Lite — концепт и архитектура
+# Rumble mod for Nintendo Switch Lite — concept & architecture
 
-*Рабочий документ для обсуждения. Версия 1.*
+*Working document for discussion. Version 1.*
 
-> **Примечание:** это ранний концепт, где внешний путь рассматривался как основной.
-> Сейчас основная цель проекта — **картридж в слоте** (см.
-> [DESIGN-NOTES.md](./DESIGN-NOTES.md) §0), а внешний USB-C/BT — запасной путь.
-> Текст ниже оставлен как есть для истории.
-
----
-
-## 1. Идея и главная задача
-
-Switch Lite не имеет встроенной вибрации (нет HD-моторов в корпусе). Цель проекта — вернуть тактильную отдачу через **plug-and-play устройство с актуатором**, которое получает реальные rumble-команды из игры и воспроизводит их, не вскрывая консоль и не модифицируя её внутренности.
-
-Ключевой принцип, на котором держится весь документ: **мы не возвращаем «удалённую» функцию — мы перехватываем сигнал, который консоль и так считает, но которому некуда идти.**
+> **Note:** this is an earlier concept where the external path was considered primary.
+> The project's main goal is now the **in-slot cartridge** (see
+> [DESIGN-NOTES.md](./DESIGN-NOTES.md) §0), with external USB-C/BT as the fallback. The
+> text below is kept as-is for history.
 
 ---
 
-## 2. Почему Lite вообще способен вибрировать (главный технический факт)
+## 1. The idea and the main task
 
-Rumble-конвейер в прошивке (HOS) на Lite **не вырезан**. Он обязан существовать, потому что Lite штатно работает с внешними Joy-Con и Pro Controller, у которых вибрация есть, и игры им её отправляют.
+The Switch Lite has no built-in vibration (no HD motors in the body). The goal is to
+bring back tactile feedback through a **plug-and-play device with an actuator** that
+receives real rumble commands from the game and plays them — without opening the
+console or modifying its internals.
 
-Значит подсистема **hid** вычисляет vibration-значения как обычно. Физически отсутствует только актуатор во встроенном корпусе. Сигнал живой — его можно поймать.
+The key principle the whole document rests on: **this doesn't restore a "removed"
+feature — it intercepts a signal the console already computes but has nowhere to send.**
 
 ---
 
-## 3. Рекомендуемая архитектура
+## 2. Why the Lite can vibrate at all (the key technical fact)
+
+The rumble pipeline in the firmware (HOS) on the Lite is **not removed**. It has to
+exist, because the Lite works normally with external Joy-Con and Pro Controllers that
+have vibration, and games send it to them.
+
+So the **hid** subsystem computes vibration values as usual. Only the actuator in the
+built-in body is physically missing. The signal is live — it can be caught.
+
+---
+
+## 3. Recommended architecture
 
 ```
-Игра
-  │  (вызывает отправку vibration values активному игроку)
+Game
+  │  (sends vibration values to the active player)
   ▼
-hid (подсистема прошивки)
-  │  ← ТОЧКА ПЕРЕХВАТА: сисмодуль читает значения здесь,
-  │     ДО того как система отбросит их за отсутствием мотора
+hid (firmware subsystem)
+  │  ← INTERCEPTION POINT: the sysmodule reads the values here,
+  │     BEFORE the system drops them for the missing motor
   ▼
-Кастомный сисмодуль (Atmosphere / libnx)
-  │  форвардит значения по выбранному каналу
+Custom sysmodule (Atmosphere / libnx)
+  │  forwards the values over the chosen channel
   ▼
-Канал связи: USB-C  ИЛИ  Bluetooth
+Channel: USB-C  OR  Bluetooth
   ▼
-Внешнее устройство (в корпусе-картридже или донгле)
-  ├─ микроконтроллер (ESP32-класс) — принимает команды
-  ├─ драйвер актуатора
-  └─ актуатор (например, Taptic-движок от iPhone 12)
-       питание: USB-C passthrough ИЛИ собственный аккумулятор
+External device (in a cartridge shell or a dongle)
+  ├─ microcontroller (ESP32-class) — receives commands
+  ├─ actuator driver
+  └─ actuator (e.g. iPhone 12 Taptic Engine)
+       power: USB-C passthrough OR its own battery
 ```
 
-Снаружи это «вставил и работает». Внутри — слот картриджа не задействован вообще.
+From the outside it's "plug it in and it works." Inside, the cartridge slot is not
+used at all.
 
 ---
 
-## 4. Почему НЕ через слот картриджа (важно)
+## 4. Why NOT through the cartridge slot (in this concept)
 
-Слот игрового картриджа — это **не периферийная шина общего назначения**, а закрытый аутентифицируемый интерфейс ровно под одно: общение с подлинным игровым картриджем. Он закрыт сразу с трёх сторон:
+The cartridge slot is **not a general-purpose peripheral bus** — it's a closed,
+authenticated interface for exactly one thing: talking to a genuine game card. It's
+closed on three sides at once:
 
-- **Данные.** Rumble физически не проходит через слот. Игра шлёт его в hid, а не на gamecard-шину. Ловить вибрацию «на картридже» — значит ловить то, чего там нет.
-- **Авторизация.** Неоригинальное устройство вызывает ошибку подлинности.
-- **Питание.** Ток в слоте гейтится той же проверкой — неаутентифицированную железку консоль обесточивает.
+- **Data.** Rumble physically doesn't go through the slot. The game sends it to hid,
+  not to the gamecard bus. Catching vibration "at the cartridge" means catching
+  something that isn't there.
+- **Authorization.** A non-original device triggers an authenticity error.
+- **Power.** Current in the slot is gated by the same check — the console de-powers an
+  unauthenticated device.
 
-Любой способ заставить слот питать/слушать наше устройство сводится к обходу аутентификации картриджа — то есть к обходу защиты от копирования. **Это вне рамок проекта и в этом документе не рассматривается.** К счастью, для нашей цели слот не нужен ни как канал данных, ни как источник питания — оба берутся из других мест (см. раздел 3).
-
----
-
-## 5. Компоненты
-
-**Софт**
-- Сисмодуль на базе Atmosphere, написан на libnx.
-- Точка перехвата rumble в hid; форвардинг значений во внешний канал.
-
-**Железо**
-- Микроконтроллер ESP32-класса (дёшево, доступно, USB + BT из коробки).
-- Актуатор: Taptic-движок от iPhone 12 — хороший компромисс размер/качество вибры, реально помещается в корпус-картридж с небольшим наращиванием сверху.
-- Питание: USB-C passthrough или собственный мелкий аккумулятор. **Не слот.**
-- Корпус: форм-фактор картриджа сохраняем для эстетики, но функционально это внешний донгл.
+In this external concept, the slot isn't needed as a data channel or a power source —
+both come from elsewhere (see section 3).
 
 ---
 
-## 6. Что предстоит реверсить (открытые вопросы)
+## 5. Components
 
-1. **Где именно в hid писать перехват** vibration-значений активного игрока.
-2. **Заполняет ли Lite vibration device встроенного хэндхелд-контроллера**, или придётся регистрировать виртуальный контроллер, чтобы игра слала ему rumble.
-3. **Латентность** канала (USB vs BT) — чтобы вибрация не отставала от событий.
-4. **Маппинг HD-rumble** (амплитуда/частота) на выбранный актуатор для приличной отдачи.
+**Software**
+- An Atmosphere-based sysmodule, written with libnx.
+- A rumble interception point in hid; forwarding values to the external channel.
 
-Всё это находится через **switchbrew wiki + исходники libnx/Atmosphere + эксперименты на железе**, а не через дизассемблер проприетарной шины. Это посильный первый RE-проект.
-
----
-
-## 7. План по шагам
-
-1. **Быстрая проверка гипотезы.** Подключить к Lite обычный Joy-Con и убедиться, что игры реально шлют ему rumble на Lite. Это подтверждает, что сигнал генерится.
-2. **Минимальный сисмодуль.** Поймать vibration-значения в hid и просто залогировать их / зажечь светодиод на внешнем устройстве при нажатии кнопок. Первая победа.
-3. **Форвардинг.** Передать значения по USB/BT на ESP32, прокрутить тестовый мотор.
-4. **Реальный актуатор + маппинг.** Подключить Taptic-движок, подобрать отображение HD-rumble.
-5. **Корпус и доводка.** Уместить в форм-фактор, отладить латентность и энергопотребление.
+**Hardware**
+- An ESP32-class microcontroller (cheap, available, USB + BT out of the box).
+- Actuator: the iPhone 12 Taptic Engine — a good size/quality compromise, fits a
+  cartridge shell with a small upward extension.
+- Power: USB-C passthrough or a small own battery. **Not the slot.**
+- Enclosure: keep the cartridge form factor for aesthetics, but functionally it's an
+  external dongle.
 
 ---
 
-## 8. Оценка проекта
+## 6. What to reverse (open questions)
 
-Подъёмно — особенно по пути через сисмодуль. Сложность средняя: не тривиально, но и не со звёздочкой. Основной риск не в «гениальности кода», а в **цикле «правка → тест на живой консоли → разбор результата»** и в реверсе точки перехвата. Это нормальная инженерия, а не мечта.
+1. **Where exactly in hid** to tap the active player's vibration values.
+2. **Does the Lite populate** the built-in handheld controller's vibration device, or
+   must a virtual controller be registered for the game to send it rumble.
+3. **Channel latency** (USB vs BT) — so the vibration doesn't lag events.
+4. **HD-rumble mapping** (amplitude/frequency) onto the chosen actuator for a decent
+   feel.
 
-Архитектура через слот — красивая на бумаге, но решает не ту задачу и упирается в обход защиты, поэтому отброшена в пользу чистого и легального пути.
+All of this is found via the **switchbrew wiki + libnx/Atmosphere sources + hardware
+experiments**, not a disassembler of the proprietary bus. A feasible first RE project.
 
 ---
 
-## 9. Главная цель
+## 7. Step plan
 
-> Дать Nintendo Switch Lite рабочую тактильную отдачу через plug-and-play внешний актуатор, управляемый кастомным сисмодулем, **без вскрытия консоли и без обхода каких-либо защит** — поймать живой rumble-сигнал в hid и довести его до железа, которое умеет вибрировать.
+1. **Quick hypothesis check.** Connect a normal Joy-Con to the Lite and confirm games
+   really send it rumble on the Lite. Confirms the signal is generated.
+2. **Minimal sysmodule.** Catch vibration values in hid and just log them / light an
+   LED on the external device on a button press. The first win.
+3. **Forwarding.** Send the values over USB/BT to an ESP32, spin a test motor.
+4. **Real actuator + mapping.** Connect the Taptic engine, tune the HD-rumble mapping.
+5. **Enclosure and polish.** Fit the form factor, tune latency and power draw.
+
+---
+
+## 8. Project assessment
+
+Doable — especially via the sysmodule path. Medium difficulty: not trivial, but not a
+"star problem." The main risk isn't "code brilliance" but the **"edit → test on a live
+console → analyze" loop** and reversing the interception point. Normal engineering, not
+a dream.
+
+The slot architecture is pretty on paper but solves the wrong problem in this concept,
+so it was set aside in favour of the simpler path.
+
+---
+
+## 9. The main goal
+
+> Give the Nintendo Switch Lite working tactile feedback through a plug-and-play
+> external actuator driven by a custom sysmodule — catch the live rumble signal in hid
+> and carry it to hardware that can vibrate.

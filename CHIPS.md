@@ -1,6 +1,5 @@
 # Chips & Hardware Reference
 
-**Author:** Dimasick-git
 **License:** GPL-3.0
 
 Hardware selection for the "In-Slot" Rumble Cartridge. The goal is to fit a full haptic system inside the ~2mm thickness of a game card.
