@@ -66,3 +66,24 @@ jobs:
         with:
           name: rumble-logger-mitm-SD
           path: dist
+
+  # Combine both sysmodules into one SD-ready bundle: extract to SD root.
+  package:
+    runs-on: ubuntu-latest
+    needs: [rumble-tap-libnx, rumble-logger-mitm]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rumble-tap-sysmodule-SD
+          path: bundle
+      - uses: actions/download-artifact@v4
+        with:
+          name: rumble-logger-mitm-SD
+          path: bundle
+      - name: Show bundle contents
+        run: find bundle -type f | sort
+      - name: Upload combined SD bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Switch-lite-Rumble-SD
+          path: bundle
