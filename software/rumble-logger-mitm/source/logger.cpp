@@ -9,18 +9,25 @@
 #include <stratosphere.hpp>
 #include <cstring>
 #include "logger.hpp"
+#include "protocol.hpp"
 
 namespace ams::mitm::hid {
 
     namespace {
 
-        constexpr const char *LogMountName = "sdmc";
-        constexpr const char *LogFilePath  = "sdmc:/rumble-logger.log";
+        constexpr const char *LogMountName  = "sdmc";
+        constexpr const char *LogFilePath   = "sdmc:/rumble-logger.log";
+        constexpr const char *FramesFilePath = "sdmc:/rumble-frames.bin";
 
         constinit os::SdkMutex g_log_mutex;
         constinit bool         g_initialized = false;
         constinit fs::FileHandle g_file;
         constinit s64          g_offset = 0;
+
+        /* Binary PROTOCOL.md frames, for offline replay to the actuator device. */
+        constinit bool           g_frames_ok = false;
+        constinit fs::FileHandle g_frames_file;
+        constinit s64            g_frames_offset = 0;
 
         /* Per-handle change throttle so each side (L/R) is logged independently. */
         constexpr size_t MaxTrackedHandles = 8;
@@ -60,6 +67,15 @@ namespace ams::mitm::hid {
             }
         }
 
+        void WriteFrame(const u8 *frame) {
+            if (!g_frames_ok) {
+                return;
+            }
+            if (R_SUCCEEDED(fs::WriteFile(g_frames_file, g_frames_offset, frame, ProtocolFrameSize, fs::WriteOption::Flush))) {
+                g_frames_offset += static_cast<s64>(ProtocolFrameSize);
+            }
+        }
+
     }
 
     void InitializeLogger() {
@@ -86,6 +102,15 @@ namespace ams::mitm::hid {
 
         const char *banner = "--- rumble-logger started (cols: tid tick npad idx side al fl ah fh) ---\n";
         WriteLine(banner, std::strlen(banner));
+
+        /* Open the binary frames file (best effort; text log works regardless). */
+        fs::CreateFile(FramesFilePath, 0);
+        if (R_SUCCEEDED(fs::OpenFile(std::addressof(g_frames_file), FramesFilePath, fs::OpenMode_Write | fs::OpenMode_AllowAppend))) {
+            if (R_FAILED(fs::GetFileSize(std::addressof(g_frames_offset), g_frames_file))) {
+                g_frames_offset = 0;
+            }
+            g_frames_ok = true;
+        }
     }
 
     void LogVibration(u64 program_id, u32 handle, float amp_low, float freq_low, float amp_high, float freq_high) {
@@ -112,6 +137,13 @@ namespace ams::mitm::hid {
 
         if (len > 0) {
             WriteLine(line, static_cast<size_t>(len));
+        }
+
+        /* Also emit a PROTOCOL.md frame for offline replay (left/right only). */
+        if (device_idx == ProtocolSideLeft || device_idx == ProtocolSideRight) {
+            u8 frame[ProtocolFrameSize];
+            EncodeFrame(device_idx, amp_low, freq_low, amp_high, freq_high, frame);
+            WriteFrame(frame);
         }
     }
 
