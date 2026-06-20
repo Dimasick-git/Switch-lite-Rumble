@@ -6,8 +6,12 @@ Sends docs/PROTOCOL.md frames over serial so you can bring up the hardware (ESP3
 two DRV2605L + LRAs) WITHOUT a Switch in the loop.
 
 Usage:
-    python rumble-send.py /dev/ttyUSB0            # pulse L and R alternately
-    python rumble-send.py COM5 --side 0 --amp 200 # hold left at amp 200
+    python rumble-send.py /dev/ttyUSB0                      # pulse L and R alternately
+    python rumble-send.py COM5 --side 0 --amp 200          # hold left at amp 200
+    python rumble-send.py /dev/ttyUSB0 --replay rumble-frames.bin   # replay a capture
+
+`rumble-frames.bin` is produced on the Switch by the rumble-logger-mitm sysmodule
+(sdmc:/rumble-frames.bin) — copy it to the PC and replay it onto the actuator.
 
 Needs pyserial:  pip install pyserial
 """
@@ -40,13 +44,29 @@ def main() -> None:
     ap.add_argument("--side", type=int, default=None,
                     help="hold one side (0=L,1=R); default = alternating pulse demo")
     ap.add_argument("--amp", type=int, default=200, help="amplitude 0..255")
+    ap.add_argument("--replay", metavar="FILE",
+                    help="stream a captured rumble-frames.bin to the actuator")
+    ap.add_argument("--interval", type=float, default=0.03,
+                    help="seconds between frames when replaying (default 0.03)")
     args = ap.parse_args()
 
     with serial.Serial(args.port, args.baud, timeout=1) as s:
         # freq bytes are advisory; ~160 Hz / 320 Hz -> /8
         fl, fh = 160 // 8, 320 // 8
         try:
-            if args.side is not None:
+            if args.replay is not None:
+                data = open(args.replay, "rb").read()
+                n = len(data) // 7
+                print(f"replaying {n} frames from {args.replay} (Ctrl-C to stop)")
+                for i in range(n):
+                    f = data[i * 7:i * 7 + 7]
+                    if f[0] != SYNC:                 # resync: skip junk byte
+                        continue
+                    s.write(f)
+                    time.sleep(args.interval)
+                s.write(frame(SIDE_STOP, 0, 0, 0, 0))
+                print("done.")
+            elif args.side is not None:
                 print(f"holding side {args.side} at amp {args.amp} (Ctrl-C to stop)")
                 while True:
                     s.write(frame(args.side, args.amp, fl, args.amp, fh))

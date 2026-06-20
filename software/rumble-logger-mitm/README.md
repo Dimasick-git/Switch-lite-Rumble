@@ -29,6 +29,14 @@ like?"* without any guesswork.
   ```
   `al/ah` = low/high-band amplitude, `fl/fh` = low/high-band frequency. Keeping L/R
   separate matters — a "full" rumble build needs both sides (two actuators).
+- It also writes **`sdmc:/rumble-frames.bin`** — the captured vibration encoded as
+  [`PROTOCOL.md`](../../docs/PROTOCOL.md) frames. Copy it to a PC and **replay it onto
+  the actuator** with the host tool, closing the loop without live USB:
+  ```sh
+  python ../../firmware/actuator-esp32/tools/rumble-send.py /dev/ttyUSB0 --replay rumble-frames.bin
+  ```
+  (A live USB-CDC / BLE forwarder from the sysmodule is the next step; the offline
+  capture→replay path makes the whole chain testable now.)
 
 ## Build
 
