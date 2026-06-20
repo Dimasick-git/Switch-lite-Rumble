@@ -1,5 +1,10 @@
 /*
  * Minimal SD-card logger for the hid vibration MITM. See logger.hpp.
+ *
+ * Logs per-handle so the left/right vibration domains stay distinguishable (a
+ * "full" rumble build needs both sides). The HidVibrationDeviceHandle is a packed
+ * u32: byte0 = npad_style_index, byte1 = player_number, byte2 = device_idx
+ * (0 = left, 1 = right), byte3 = pad.
  */
 #include <stratosphere.hpp>
 #include <cstring>
@@ -17,8 +22,34 @@ namespace ams::mitm::hid {
         constinit fs::FileHandle g_file;
         constinit s64          g_offset = 0;
 
-        /* Simple change-throttle so we don't spam identical frames. */
-        constinit float g_last_amp = -1.0f;
+        /* Per-handle change throttle so each side (L/R) is logged independently. */
+        constexpr size_t MaxTrackedHandles = 8;
+        struct HandleAmp { u32 handle; float amp; bool used; };
+        constinit HandleAmp g_last[MaxTrackedHandles] = {};
+
+        /* Returns true if this (handle, amp) is a meaningful change worth logging. */
+        bool ShouldLog(u32 handle, float amp) {
+            HandleAmp *slot = nullptr;
+            HandleAmp *free_slot = nullptr;
+            for (auto &e : g_last) {
+                if (e.used && e.handle == handle) { slot = std::addressof(e); break; }
+                if (!e.used && free_slot == nullptr) { free_slot = std::addressof(e); }
+            }
+            if (slot == nullptr) {
+                /* First time we see this handle (or table full → overwrite slot 0). */
+                slot = (free_slot != nullptr) ? free_slot : std::addressof(g_last[0]);
+                slot->used = true;
+                slot->handle = handle;
+                slot->amp = amp;
+                return true;
+            }
+            const float d = amp > slot->amp ? amp - slot->amp : slot->amp - amp;
+            if (d < 0.03f) {
+                return false;
+            }
+            slot->amp = amp;
+            return true;
+        }
 
         void WriteLine(const char *line, size_t len) {
             if (!g_initialized) {
@@ -41,8 +72,7 @@ namespace ams::mitm::hid {
             return;
         }
 
-        /* Create the file if it doesn't exist yet (ignore "already exists"). */
-        fs::CreateFile(LogFilePath, 0);
+        fs::CreateFile(LogFilePath, 0); /* ignore "already exists" */
 
         if (R_FAILED(fs::OpenFile(std::addressof(g_file), LogFilePath, fs::OpenMode_Write | fs::OpenMode_AllowAppend))) {
             return;
@@ -54,28 +84,30 @@ namespace ams::mitm::hid {
 
         g_initialized = true;
 
-        const char *banner = "--- rumble-logger started ---\n";
+        const char *banner = "--- rumble-logger started (cols: tid tick npad idx side al fl ah fh) ---\n";
         WriteLine(banner, std::strlen(banner));
     }
 
     void LogVibration(u64 program_id, u32 handle, float amp_low, float freq_low, float amp_high, float freq_high) {
         const float amp = amp_low > amp_high ? amp_low : amp_high;
 
-        /* Throttle: only log when the dominant amplitude changed noticeably. */
-        if (g_last_amp >= 0.0f) {
-            const float d = amp > g_last_amp ? amp - g_last_amp : g_last_amp - amp;
-            if (d < 0.03f) {
-                return;
-            }
-        }
-        g_last_amp = amp;
-
         std::scoped_lock lk(g_log_mutex);
 
-        char line[160];
+        if (!ShouldLog(handle, amp)) {
+            return;
+        }
+
+        /* Decode the packed handle. */
+        const u8 npad_style = static_cast<u8>(handle & 0xFF);
+        const u8 player     = static_cast<u8>((handle >> 8) & 0xFF);
+        const u8 device_idx = static_cast<u8>((handle >> 16) & 0xFF);
+        const char *side = (device_idx == 0) ? "L" : (device_idx == 1) ? "R" : "?";
+        AMS_UNUSED(npad_style);
+
+        char line[176];
         const auto len = util::SNPrintf(line, sizeof(line),
-            "tid=%016lx tick=%lu handle=%08x al=%.3f fl=%.1f ah=%.3f fh=%.1f\n",
-            program_id, os::GetSystemTick().GetInt64Value(), handle,
+            "tid=%016lx tick=%lu npad=%02x idx=%u side=%s al=%.3f fl=%.1f ah=%.3f fh=%.1f\n",
+            program_id, os::GetSystemTick().GetInt64Value(), player, device_idx, side,
             amp_low, freq_low, amp_high, freq_high);
 
         if (len > 0) {

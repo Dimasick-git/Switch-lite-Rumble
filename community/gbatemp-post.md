@@ -53,4 +53,10 @@ Repo (code, research, design docs, references):
 Everything's documented and the sysmodule is downloadable from the repo's Actions
 artifacts. Feedback, ideas, and contributors welcome — drop a reply or open an issue.
 
+A note on intent: this is a hobbyist homebrew project about giving the Switch Lite the
+tactile feedback it shipped without. **Participation is entirely your own choice** —
+join only if it genuinely interests you, no pressure either way. Nothing here is meant
+to encourage piracy or any harmful use, and we're not asking anyone to do anything
+they're not comfortable with.
+
 Thanks!
