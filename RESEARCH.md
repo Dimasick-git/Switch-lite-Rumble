@@ -61,4 +61,33 @@ The software side is already proven:
 3.  **Power Draw:** Confirming the 3.1V rail's actual current limit on the Lite before it triggers a system shutdown.
 
 ---
+
+## 6. Capture mechanisms & hardware notes (further research)
+
+### 6.1 A second way to capture rumble (besides MITMing 201/206)
+MissionControl shows another route: it intercepts the **`WriteHidData`** IPC and uses
+**hid report-event redirection** — external software can register to either *consume*
+redirected hid events or *forward* them back to the system. So besides MITMing
+`SendVibrationValue/Values`, the vibration stream can be tapped via hid report
+redirection. Useful as a cross-check / alternative path for the logger.
+- Sources: [MissionControl](https://github.com/ndeadly/MissionControl), [GameBrew: MissionControl](https://www.gamebrew.org/wiki/MissionControl_Switch).
+
+### 6.2 The Lite's game-card slot reader is a replaceable module
+On the Lite (HDH-001) the **game-card reader is a separate modular PCB** with a flex
+cable, sold as a **plug-and-play, no-solder** replacement part (Deal4GO, YWLRONG,
+Zahara, etc.). Practical upshot: a cheap replacement slot board can be bought to probe
+pins / prototype against without risking the console.
+- Example part listings: search "Switch Lite HDH-001 game card reader slot".
+
+### 6.3 Relevant homebrew-vibration thread
+- **GBAtemp — "Joycon vibration support in homebrew (can we do that yet?)"**:
+  https://gbatemp.net/threads/joycon-vibration-support-in-homebrew-can-we-do-that-yet.523455/
+- **sys-con rumble discussion** (virtual-controller vibration limit): https://github.com/cathery/sys-con/discussions/1
+
+### 6.4 Status of the slot-power question (unchanged, hardware-gated)
+No public project powers an external accessory from the slot. The open hardware checks
+remain: does enabling the GC rail (GCA→3.1 V) reach the physical slot pins, and what
+current the rail tolerates before the console browns out. Both are multimeter tests.
+
+---
 *Maintained by Dimasick-git.*
