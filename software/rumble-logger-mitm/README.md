@@ -21,8 +21,14 @@ like?"* without any guesswork.
 - Every other `hid` command (and the two above, after logging) is **forwarded** to
   the real service via `sm::mitm::ResultShouldForwardToSession()`. Nothing about the
   console's behaviour changes; we only observe.
-- Logging is throttled (only on amplitude change) and written to
-  **`sdmc:/rumble-logger.log`**.
+- Logging is throttled **per handle** (so each side is recorded independently) and
+  written to **`sdmc:/rumble-logger.log`**. Each line decodes the vibration device
+  handle, so left vs. right stays visible:
+  ```
+  tid=<program id> tick=<systick> npad=<player> idx=<device> side=<L|R|?> al fl ah fh
+  ```
+  `al/ah` = low/high-band amplitude, `fl/fh` = low/high-band frequency. Keeping L/R
+  separate matters — a "full" rumble build needs both sides (two actuators).
 
 ## Build
 
