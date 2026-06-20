@@ -9,6 +9,7 @@ Working design documents and the decision log for the Switch-lite-Rumble project
 | [`slot-approach-technical-spec.md`](./slot-approach-technical-spec.md) | The "through-the-slot" spec: cartridge emulation, slot power, the Lotus3 problem. The primary path. |
 | [`RUMBLE-ENCODING.md`](./RUMBLE-ENCODING.md) | How HD rumble works: the `HidVibrationValue` float layer, logarithmic frequency/amplitude encoding, ranges, and the mapping onto an actuator (Taptic/LRA via DRV2605L) |
 | [`HAPTICS.md`](./HAPTICS.md) | Haptics: actuator types (ERM/LRA/Taptic/piezo/voice-coil), comparison, the DRV2605L driver, power, and what fits the project |
+| [`PROTOCOL.md`](./PROTOCOL.md) | The wire protocol between the Switch sysmodule and the actuator device — the 7-byte vibration frame (per-side amp/freq), encoding/decoding, framing |
 
 Related material at the repo root: [`../CHIPS.md`](../CHIPS.md) (chip selection and
 physical constraints) and [`../RESEARCH.md`](../RESEARCH.md) (the archive of sources
