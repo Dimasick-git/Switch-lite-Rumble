@@ -5,11 +5,13 @@
  * two game-card (GC) regulator domains on the MAX77620 PMIC, so a homebrew can
  * provide power to a device in the cartridge slot (here: a rumble accessory).
  *
- * The photo/overlay that motivated this shows the "GCA" domain set to 3100 mV —
- * i.e. the cartridge VCC 3.1V rail — confirming GCA == game-card core power.
+ * An overlay was seen setting the "GCA" domain to 3100 mV (matching the cartridge
+ * VCC 3.1V rail). The exact regulator->slot mapping is NOT yet hardware-verified
+ * (issue #2 reports LDO2 for the 3.1V rail, not LDO3) — confirm on hardware before
+ * relying on it. See README "Power budget — verify on hardware".
  *
- *   GCA = MAX77620 LDO3  -> game-card core rail (~3.1 V)
- *   GCC = MAX77620 LDO5  -> game-card I/O rail  (~1.8 V)
+ *   GCA = MAX77620 LDO3  -> game-card core rail (~3.1 V)   [assumed, unverified]
+ *   GCC = MAX77620 LDO5  -> game-card I/O rail  (~1.8 V)   [assumed, unverified]
  *
  * --------------------------------------------------------------------------
  * Attribution: derived from runtime voltage-control code by **Cooler3D**
