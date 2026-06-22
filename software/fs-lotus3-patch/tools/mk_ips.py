@@ -7,11 +7,12 @@ Usage:
 
 Reads a per-version offset spec (offsets/<version>.json) and emits a
 valid IPS file ready to deploy to:
-    sdmc:/atmosphere/exefs_patches/fs/<fs_build_id>/patch.ips
+    sdmc:/atmosphere/exefs_patches/fs/<fs_build_id_first8bytes>.ips
 
 The fs_build_id is the first 8 bytes of the NSO build ID (at offset 0x40
-in the raw .nso file), printed as uppercase hex. This script reads it from
-the JSON and prints the full deploy path.
+in the raw .nso file), printed as uppercase hex -- this is the FILENAME,
+not a subdirectory. The spec JSON stores the full 16-byte ID; this script
+uses the first 8 bytes (16 hex chars) to match Atmosphere's expectation.
 
 IPS format used:
   MAGIC     5 bytes  'PATCH'
@@ -35,7 +36,7 @@ def encode_record(offset: int, data: bytes) -> bytes:
     if offset > 0xFFFFFF:
         raise ValueError(f"IPS offset 0x{offset:X} exceeds 24-bit range -- "
                          "use IPS32 format or check the offset")
-    off3 = struct.pack(">I", offset)[1:]  # drop the leading zero byte
+    off3   = struct.pack(">I", offset)[1:]  # drop the leading zero byte
     length = struct.pack(">H", len(data))
     return off3 + length + data
 
@@ -49,8 +50,7 @@ def build_ips(records: list) -> bytes:
 
 
 def load_spec(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8")
-    return json.loads(text)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def main():
@@ -63,8 +63,9 @@ def main():
 
     spec = load_spec(spec_path)
 
-    hos = spec.get("hos_version", "unknown")
-    build_id = spec.get("fs_build_id", "XXXXXXXXXXXXXXXX")
+    hos      = spec.get("hos_version", "unknown")
+    build_id = spec.get("fs_build_id", "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+    bid_file = build_id[:16].upper()  # first 8 bytes = Atmosphere IPS filename
     print(f"HOS {hos}  |  fs build ID: {build_id}")
     print()
 
@@ -78,7 +79,6 @@ def main():
         if offset is None:
             skipped.append(name)
             continue
-        # Support hex strings ("0x1A2B3C") or plain ints
         if isinstance(offset, str):
             offset = int(offset, 16) if offset.startswith("0x") else int(offset)
         data_hex = info.get("data", "1F2003D5")
@@ -98,12 +98,12 @@ def main():
 
     ips = build_ips(records)
     out_path.write_bytes(ips)
-    
+
     print()
     print(f"Wrote {len(ips)} bytes -> {out_path}")
     print()
     print("Deploy to SD card:")
-    print(f"  sdmc:/atmosphere/exefs_patches/fs/{build_id}/patch.ips")
+    print(f"  sdmc:/atmosphere/exefs_patches/fs/{bid_file}.ips")
 
 
 if __name__ == "__main__":
