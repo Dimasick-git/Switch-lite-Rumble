@@ -1,0 +1,23 @@
+{
+  "_doc": "HOS 18.1.0 fs patch offsets. Offsets are TBD -- extract fs.nso from HOS 18.1.0 firmware, decompress it, and run tools/find_offsets.py to get candidates, then verify in Ghidra.",
+  "hos_version": "18.1.0",
+  "fs_build_id": "TODO",
+  "_build_id_note": "Run: python3 -c \"d=open('fs.nso','rb').read(); print(d[0x40:0x48].hex().upper())\"",
+  "patches": {
+    "IsGameCardInserted_false_branch": {
+      "offset": null,
+      "data": "1F2003D5",
+      "_comment": "TBD: run find_offsets.py, then verify candidate whose branch target reaches PowerOff chain."
+    },
+    "GetGameCardHandle_power_gate_branch": {
+      "offset": null,
+      "data": "1F2003D5",
+      "_comment": "TBD: primary target. Look for BL+CBNZ X0 pair inside IDeviceOperator::GetGameCardHandle."
+    },
+    "GetGameCardAttribute_fail_branch": {
+      "offset": null,
+      "data": "1F2003D5",
+      "_comment": "TBD: look for BL+CBNZ X0 pair inside IDeviceOperator::GetGameCardAttribute."
+    }
+  }
+}

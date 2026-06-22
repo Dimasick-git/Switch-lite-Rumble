@@ -1,0 +1,24 @@
+{
+  "_doc": "Copy this file to <version>.json and fill in the offset fields.",
+  "hos_version": "X.Y.Z",
+  "fs_build_id": "XXXXXXXXXXXXXXXX",
+  "_build_id_note": "First 8 bytes of the NSO build ID at offset 0x40 in the raw fs.nso, uppercase hex. This becomes the Atmosphere exefs_patches directory name.",
+  "patches": {
+    "_patch_note": "All offsets are into the decompressed .text section (file offset - 0x100 if stripping NSO header). Data is ARM64 NOP = 1F2003D5.",
+    "IsGameCardInserted_false_branch": {
+      "offset": null,
+      "data": "1F2003D5",
+      "_comment": "NOP the CBZ/CBNZ Wn that follows the polling BL. Without this, fs cuts GCA+GCC rails on the very first polling cycle when no authentic card responds."
+    },
+    "GetGameCardHandle_power_gate_branch": {
+      "offset": null,
+      "data": "1F2003D5",
+      "_comment": "NOP the CBNZ X0 that follows the handle-acquisition BL. Primary target from RESEARCH.md section 1.1. Result != 0 path leads to PowerOff chain."
+    },
+    "GetGameCardAttribute_fail_branch": {
+      "offset": null,
+      "data": "1F2003D5",
+      "_comment": "NOP the CBNZ X0 after the attribute-check BL. fs validates the card type byte immediately after handle acquisition; failure here also triggers power cut even if handle succeeded."
+    }
+  }
+}
