@@ -40,7 +40,7 @@
 #define SCAN_WINDOW          0x8000
 #define SCAN_OVERLAP         0x80
 #define MAX_PAT_LEN          0x40
-#define DISCOVERY_MAX_HITS   256        /* cap output size in discovery mode */
+#define DISCOVERY_MAX_HITS   256
 #define SIG_CTX_WORDS_BEFORE 4
 #define SIG_CTX_WORDS_AFTER  2
 
@@ -142,14 +142,14 @@ static long find_pattern(const u8 *buf, long blen, const u8 *pat, const u8 *mask
     return -1;
 }
 
-/* ---- ARM64 instruction helpers (for discovery mode) -------------------- */
+/* ---- ARM64 instruction helpers ----------------------------------------- */
 
 typedef u32 insn_t;
 
 static inline insn_t rd_insn(const u8 *buf, long off) {
     insn_t w;
     __builtin_memcpy(&w, buf+off, 4);
-    return __builtin_bswap32(__builtin_bswap32(w));  /* keep LE */
+    return w;  /* ARM64 instructions are stored LE on Switch; no swap needed */
 }
 
 static inline int is_bl(insn_t w)     { return (w&0xFC000000)==0x94000000; }
@@ -169,29 +169,31 @@ static inline int insn_reg(insn_t w)  { return (int)(w&0x1F); }
  *   CBZ/CBNZ  -> bytes 0-2 vary (imm19 + Rt); byte 3 (opcode) is stable
  *   Other     -> emit literal hex bytes (assumed stable)
  */
-static void insn_sig_tokens(insn_t w, char *out8) {
+static void insn_sig_tokens(insn_t w, char *out16) {
     u8 b[4];
     __builtin_memcpy(b, &w, 4);
     if (is_bl(w)) {
-        strcpy(out8, ".. .. .. ..");
+        strcpy(out16, ".. .. .. ..");
         return;
     }
     if (is_any_cb(w)) {
-        snprintf(out8, 16, ".. .. .. %02x", b[3]);
+        snprintf(out16, 16, ".. .. .. %02x", b[3]);
         return;
     }
-    snprintf(out8, 16, "%02x %02x %02x %02x", b[0],b[1],b[2],b[3]);
+    snprintf(out16, 16, "%02x %02x %02x %02x", b[0],b[1],b[2],b[3]);
 }
 
 /*
- * Emit a context window centred on off_cb (the CBZ/CBNZ instruction).
+ * Emit a context window around the BL+CBZ/CBNZ pair.
  * Returns the patch_offset (bytes from pattern start to the CBZ/CBNZ).
+ * Near chunk boundaries the context may be shorter than SIG_CTX_WORDS_*;
+ * build_signature clamps start/end to the available buffer.
  */
 static int build_signature(const u8 *region, long region_size,
                            long off_bl, char *pat_out, int pat_cap) {
     long start = off_bl - SIG_CTX_WORDS_BEFORE * 4;
     if (start < 0) start = 0;
-    long end = off_bl + 8 + SIG_CTX_WORDS_AFTER * 4;  /* BL + CBZ + after */
+    long end = off_bl + 8 + SIG_CTX_WORDS_AFTER * 4;
     if (end > region_size) end = region_size;
 
     pat_out[0] = '\0';
@@ -207,11 +209,10 @@ static int build_signature(const u8 *region, long region_size,
     return (int)(off_bl + 4 - start);  /* byte offset to CBZ/CBNZ in pattern */
 }
 
-/* ---- discovery: scan one R-X region ------------------------------------ */
+/* ---- discovery: scan one chunk for BL+CBZ/CBNZ X0/W0 pairs ------------ */
 
 static void discovery_scan_region(const u8 *buf, long blen,
                                   u64 region_base, int *count) {
-    /* Broad search: BL immediately followed by CBZ/CBNZ X0 or W0. */
     long n = blen / 4;
     for (long i = 0; i + 1 < n; i++) {
         if (*count >= DISCOVERY_MAX_HITS) break;
@@ -224,16 +225,14 @@ static void discovery_scan_region(const u8 *buf, long blen,
         long off_bl = i * 4;
         u64  abs_bl = region_base + (u64)off_bl;
 
-        /* Build signature string */
         char sig[512];
         int poff = build_signature(buf, blen, off_bl, sig, (int)sizeof(sig));
 
-        /* Determine type label */
         const char *kind;
-        if (is_cbnz64(wcb)||is_cbz64(wcb)) kind = "X0 (Result/handle)";
-        else                                kind = "W0 (bool)";
+        if (is_cbnz64(wcb)||is_cbz64(wcb)) kind = "X0 (Result/handle, 64-bit)";
+        else                                kind = "W0 (bool/Result, 32-bit)";
 
-        logf("CANDIDATE %d: @0x%lx (region+0x%lx)", *count, abs_bl, off_bl);
+        logf("CANDIDATE %d: @0x%lx (chunk+0x%lx)", *count, abs_bl, off_bl);
         logf("  type     : BL + %s%d [%s]",
              is_cbz64(wcb)||is_cbz32(wcb) ? "CBZ " : "CBNZ",
              insn_reg(wcb), kind);
@@ -291,12 +290,10 @@ int main(int argc, char *argv[]) {
 
     log_open();
 
-    /* Count enabled signatures. */
     int enabled = 0;
     for (size_t i = 0; i < FS_RAIL_PATCH_COUNT; i++)
         if (g_fs_rail_patches[i].enabled) enabled++;
 
-    /* Locate fs process. */
     u64 fs_pid = 0;
     Result rc = pmdmntGetProcessId(&fs_pid, FS_PROGRAM_ID);
     if (R_FAILED(rc)) {
@@ -305,7 +302,6 @@ int main(int argc, char *argv[]) {
         while (true) svcSleepThread(1'000'000'000ULL);
     }
 
-    /* Attach debugger. */
     Handle dbg;
     rc = svcDebugActiveProcess(&dbg, fs_pid);
     if (R_FAILED(rc)) {
@@ -317,8 +313,12 @@ int main(int argc, char *argv[]) {
     if (enabled == 0) {
         /* ----------------------------------------------------------------
          * DISCOVERY MODE
-         * Walk every R-X region, log all BL+CBZ/CBNZ X0/W0 candidates
-         * with ready-to-paste signatures.  Output goes to the log file.
+         * Walk every R-X region in SCAN_WINDOW chunks with SCAN_OVERLAP
+         * overlap (same strategy as patch mode). Logs all BL+CBZ/CBNZ
+         * X0/W0 pairs with ready-to-paste signatures.
+         *
+         * Chunked reads avoid malloc'ing the full .text section, which
+         * can be several MB -- far beyond the 512 KB sysmodule heap.
          * ---------------------------------------------------------------- */
         logf("=== DISCOVERY MODE ===");
         logf("All signatures disabled. Scanning fs .text for power-gate candidates.");
@@ -332,6 +332,7 @@ int main(int argc, char *argv[]) {
         logf("  -> python3 find_offsets.py main --emit-signature");
         logf("");
 
+        static u8 disc_win[SCAN_WINDOW + SCAN_OVERLAP];
         int count = 0;
         u64 addr  = 0;
         while (true) {
@@ -339,12 +340,16 @@ int main(int argc, char *argv[]) {
             if (R_FAILED(svcQueryDebugProcessMemory(&mi, &pi, dbg, addr))) break;
             if ((mi.perm & Perm_X) && mi.size > 0) {
                 logf("--- code region @0x%lx size=0x%lx ---", mi.addr, mi.size);
-                /* Read entire region for discovery (broad scan). */
-                u8 *buf = malloc(mi.size);
-                if (buf) {
-                    if (R_SUCCEEDED(svcReadDebugProcessMemory(buf, dbg, mi.addr, mi.size)))
-                        discovery_scan_region(buf, (long)mi.size, mi.addr, &count);
-                    free(buf);
+                for (u64 pos = 0; pos < mi.size && count < DISCOVERY_MAX_HITS; ) {
+                    u64 chunk = mi.size - pos;
+                    if (chunk > (u64)(SCAN_WINDOW + SCAN_OVERLAP))
+                        chunk = (u64)(SCAN_WINDOW + SCAN_OVERLAP);
+                    if (R_SUCCEEDED(svcReadDebugProcessMemory(
+                            disc_win, dbg, mi.addr + pos, chunk)))
+                        discovery_scan_region(disc_win, (long)chunk,
+                                              mi.addr + pos, &count);
+                    if (chunk < (u64)(SCAN_WINDOW + SCAN_OVERLAP)) break;
+                    pos += SCAN_WINDOW;
                 }
             }
             u64 next = mi.addr + mi.size;

@@ -7,9 +7,6 @@ Usage:
     python3 find_offsets.py /path/to/exefs/main          # raw NSO file
     python3 find_offsets.py /path/to/exefs/main.nso      # same, .nso extension
 
-    # from a nxdumptool 'Program NCA' plaintext dump:
-    python3 find_offsets.py fs_main.nso
-
     # from an already-decompressed flat binary (legacy):
     python3 find_offsets.py fs_decompressed.bin
 
@@ -30,7 +27,7 @@ The script auto-detects NSO format (magic "NSO0") and decompresses
 No external dependencies for LZ4 -- a minimal block decompressor is built in.
 Optionally install lz4 for faster decoding: pip install lz4
 
-Searches for BL + CBZ/CBNZ X0 pairs at each of the three power-gate sites:
+Searches for BL + CBZ/CBNZ X0/W0 pairs at each of the three power-gate sites:
   Site 1 -- IsGameCardInserted:   CBZ/CBNZ W0 after polling call
   Site 2 -- GetGameCardHandle:    CBNZ X0 after handle-acquisition BL
   Site 3 -- GetGameCardAttribute: CBNZ X0 after attribute-check BL
@@ -114,7 +111,6 @@ def load_nso(raw: bytes):
     text_foff           = _u32le(raw, 0x10)
     text_size           = _u32le(raw, 0x18)  # decompressed size
     text_compressed_sz  = _u32le(raw, 0x60)
-    build_id            = raw[0x40:0x50]     # first 16 bytes (full id = 0x40:0x60)
 
     if flags & 1:                            # .text is LZ4 compressed
         src = raw[text_foff:text_foff + text_compressed_sz]
@@ -133,12 +129,12 @@ def load_nso(raw: bytes):
 def _word(data, off):
     return struct.unpack_from('<I', data, off)[0]
 
-def is_bl(w):      return (w & 0xFC000000) == 0x94000000
-def is_cbz64(w,r=None): return (w & 0xFF000000) == 0xB4000000 and (r is None or (w&0x1F)==r)
-def is_cbnz64(w,r=None):return (w & 0xFF000000) == 0xB5000000 and (r is None or (w&0x1F)==r)
-def is_cbz32(w,r=None): return (w & 0xFF000000) == 0x34000000 and (r is None or (w&0x1F)==r)
-def is_cbnz32(w,r=None):return (w & 0xFF000000) == 0x35000000 and (r is None or (w&0x1F)==r)
-def is_cb(w):      return is_cbz64(w) or is_cbnz64(w) or is_cbz32(w) or is_cbnz32(w)
+def is_bl(w):           return (w & 0xFC000000) == 0x94000000
+def is_cbz64(w, r=None):  return (w & 0xFF000000) == 0xB4000000 and (r is None or (w & 0x1F) == r)
+def is_cbnz64(w, r=None): return (w & 0xFF000000) == 0xB5000000 and (r is None or (w & 0x1F) == r)
+def is_cbz32(w, r=None):  return (w & 0xFF000000) == 0x34000000 and (r is None or (w & 0x1F) == r)
+def is_cbnz32(w, r=None): return (w & 0xFF000000) == 0x35000000 and (r is None or (w & 0x1F) == r)
+def is_cb(w):           return is_cbz64(w) or is_cbnz64(w) or is_cbz32(w) or is_cbnz32(w)
 
 def branch_target(base, w):
     imm19 = (w >> 5) & 0x7FFFF
@@ -161,9 +157,9 @@ def disasm(w, off):
 # ---------------------------------------------------------------------------
 
 def _sig_tokens(w):
-    b = [(w>>(8*i))&0xFF for i in range(4)]
-    if is_bl(w):   return ['..','..','..','..']    # entire 4 bytes vary
-    if is_cb(w):   return ['..','..','..', f'{b[3]:02x}']  # imm19+Rt vary
+    b = [(w >> (8*i)) & 0xFF for i in range(4)]
+    if is_bl(w):  return ['..', '..', '..', '..']
+    if is_cb(w):  return ['..', '..', '..', f'{b[3]:02x}']
     return [f'{b[i]:02x}' for i in range(4)]
 
 def emit_signature(text, off_cbz):
@@ -180,16 +176,20 @@ def emit_signature(text, off_cbz):
 # Search
 # ---------------------------------------------------------------------------
 
+# (name, description, want_x64, reg)
+# want_x64=True  -> search for CBZ/CBNZ X0 (64-bit; clang often uses CBNZ X0
+#                   even for u32 Result, since W0 zero-extends to X0)
+# want_x64=False -> search for CBZ/CBNZ W0 (32-bit; bool return / W0 check)
 SITES = [
     ('IsGameCardInserted_false_branch',
      'CBZ/CBNZ W0 after polling BL -- false return cuts rails',
-     False, 0, True),
+     False, 0),
     ('GetGameCardHandle_power_gate_branch',
      'CBNZ X0 after handle-acquisition BL -- Result != 0 cuts rails',
-     True,  0, False),
+     True,  0),
     ('GetGameCardAttribute_fail_branch',
      'CBNZ X0 after attribute-check BL -- bad card type cuts rails',
-     True,  0, False),
+     True,  0),
 ]
 
 def search(text, want_x64, reg):
@@ -229,21 +229,20 @@ def main():
     text, build_id = load_nso(raw)
 
     if build_id is not None:
-        bid_hex = build_id.hex().upper()
-        bid_short = bid_hex[:16]   # first 8 bytes = Atmosphere IPS filename
+        bid_hex   = build_id.hex().upper()
+        bid_short = bid_hex[:16]   # first 8 bytes = Atmosphere IPS filename stem
         print(f"Build ID: {bid_hex}")
-        print(f"IPS filename: atmosphere/exefs_patches/fs/{bid_short}.ips")
+        print(f"IPS path: sdmc:/atmosphere/exefs_patches/fs/{bid_short}.ips")
     else:
+        bid_short = None
         print("Build ID: unknown (pre-decompressed flat binary)")
 
     print(f"Searching .text ({len(text):,} bytes)")
     print(f"NOP patch: 1F 20 03 D5")
     print('=' * 72)
 
-    for name, desc, want_x64, reg, _unused in SITES:
-        hits = search(text, not want_x64, reg)   # want_x64=True -> 64-bit regs
-        # fix: 2nd/3rd sites want X0 (64-bit), 1st wants W0 (32-bit)
-        hits = search(text, want_x64=(not (name=='IsGameCardInserted_false_branch')), reg=0)
+    for name, desc, want_x64, reg in SITES:
+        hits = search(text, want_x64=want_x64, reg=reg)
         print(f"\n[{name}]")
         print(f"  {desc}")
         print(f"  {len(hits)} candidate(s)")
@@ -268,9 +267,10 @@ def main():
 
     print()
     print('=' * 72)
-    if build_id is not None:
-        print(f"To make the IPS patch, run mk_ips.py with the offsets above.")
-        print(f"IPS goes to: sdmc:/atmosphere/exefs_patches/fs/{bid_short}.ips")
+    if bid_short is not None:
+        print(f"To generate the IPS patch, run:")
+        print(f"  python3 mk_ips.py offsets/<version>.json output.ips")
+        print(f"Deploy to: sdmc:/atmosphere/exefs_patches/fs/{bid_short}.ips")
     print("For version-agnostic patching: paste --emit-signature output into")
     print("  software/fs-rail-keepalive/source/patches.h  (set enabled=true)")
 
