@@ -1,13 +1,13 @@
 # Build all sysmodules with devkitPro and publish a GitHub Release.
 #
 # Triggers:
-#   - Push a tag  v*        -> full release (prerelease=false)
-#   - workflow_dispatch     -> manual run, tag name from input (prerelease=true)
+#   push tag  v*        -> GitHub Release  (prerelease=false)
+#   workflow_dispatch   -> GitHub Release  (prerelease=true, tag from input)
 #
-# SD card layout in the output zip:
+# SD card zip layout:
 #   sd/atmosphere/contents/<title_id>/exefs.nsp
 #   sd/atmosphere/contents/<title_id>/flags/boot2.flag
-# Plus a tools/ folder with the Python PC utilities.
+# Plus tools/ with the Python PC utilities.
 
 name: Build & Release
 
@@ -26,27 +26,23 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build sysmodules & publish release
+  release:
+    name: Build & Release
     runs-on: ubuntu-latest
+    # Same container as build.yml -- proven to work with libnx toolchain.
+    container:
+      image: devkitpro/devkita64:latest
 
     steps:
-      # ----------------------------------------------------------------
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # ----------------------------------------------------------------
-      - name: Install devkitPro (switch-dev)
-        uses: devkitPro/action-setup@v1
-        with:
-          packages: switch-dev
-
-      # ----------------------------------------------------------------
       - name: Resolve release tag
         id: tag
+        shell: bash
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
@@ -54,21 +50,28 @@ jobs:
             echo "name=${{ github.event.inputs.tag_name }}" >> "$GITHUB_OUTPUT"
           fi
 
-      # ----------------------------------------------------------------
+      # ---- builds --------------------------------------------------
       - name: Build rumble-tap-sysmodule
-        run: make -C software/rumble-tap-sysmodule -j$(nproc)
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          make -C software/rumble-tap-sysmodule -j$(nproc)
 
       - name: Build fs-rail-keepalive
-        run: make -C software/fs-rail-keepalive -j$(nproc)
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          make -C software/fs-rail-keepalive -j$(nproc)
 
-      # Uses Atmosphere system_module.mk + libstratosphere submodule.
-      # continue-on-error so a libstratosphere toolchain issue doesn't block the release.
+      # Atmosphere system_module.mk + libstratosphere -- may need extra setup;
+      # continue-on-error so a toolchain issue doesn't block the release.
       - name: Build rumble-logger-mitm
-        run: make -C software/rumble-logger-mitm -j$(nproc)
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          make -C software/rumble-logger-mitm -j$(nproc)
         continue-on-error: true
 
-      # ----------------------------------------------------------------
+      # ---- stage SD card tree --------------------------------------
       - name: Stage SD card layout
+        shell: bash
         run: |
           set -e
           SD=dist/sd
@@ -82,7 +85,7 @@ jobs:
             touch      "$SD/atmosphere/contents/$ID/flags/boot2.flag"
             echo "[OK] rumble-tap-sysmodule -> $ID"
           else
-            echo "[WARN] rumble-tap-sysmodule.nsp missing -- build failed?"
+            echo "[WARN] rumble-tap-sysmodule.nsp not found"
           fi
 
           # ---- fs-rail-keepalive  (0100000000ABE101) ----
@@ -94,53 +97,54 @@ jobs:
             touch      "$SD/atmosphere/contents/$ID/flags/boot2.flag"
             echo "[OK] fs-rail-keepalive -> $ID"
           else
-            echo "[WARN] fs-rail-keepalive.nsp missing -- build failed?"
+            echo "[WARN] fs-rail-keepalive.nsp not found"
           fi
 
           # ---- rumble-logger-mitm  (0100000000ABE200) ----
-          # Atmosphere system_module.mk may place the NSP in out/ or cwd;
-          # discover by searching the tree (skip libstratosphere source tree).
-          MITM=$(find software/rumble-logger-mitm \
-                   \( -path '*/libstratosphere/*' -prune \) -o \
-                   -name '*.nsp' -print 2>/dev/null | head -1)
+          # system_module.mk writes NSP to out/<config>/ .
+          # Exclude libstratosphere source tree from the search.
+          MITM=$(find software/rumble-logger-mitm/out -name '*.nsp' 2>/dev/null | head -1)
+          if [ -z "$MITM" ]; then
+            # fallback: broader search excluding submodule tree
+            MITM=$(find software/rumble-logger-mitm \
+                     \( -path '*/libstratosphere/*' -prune \) -o \
+                     -name '*.nsp' -print 2>/dev/null | head -1)
+          fi
           if [ -n "$MITM" ]; then
             ID=0100000000ABE200
             mkdir -p "$SD/atmosphere/contents/$ID/flags"
             cp "$MITM" "$SD/atmosphere/contents/$ID/exefs.nsp"
             touch       "$SD/atmosphere/contents/$ID/flags/boot2.flag"
-            echo "[OK] rumble-logger-mitm -> $ID  (from $MITM)"
+            echo "[OK] rumble-logger-mitm -> $ID  (src: $MITM)"
           else
-            echo "[WARN] rumble-logger-mitm NSP not found (build may have failed -- see log above)"
+            echo "[WARN] rumble-logger-mitm NSP not found (build likely failed)"
           fi
 
-          # ---- PC tools: Python scripts, no build needed ----
+          # ---- Python PC tools (no build needed) ----
           mkdir -p dist/tools
           cp software/fs-lotus3-patch/tools/*.py dist/tools/
 
-          # ---- Summary ----
           echo ""
           echo "=== staged files ==="
           find dist -type f | sort
 
-      # ----------------------------------------------------------------
+      # ---- zip & publish -------------------------------------------
       - name: Pack release ZIP
+        shell: bash
         run: |
           TAG="${{ steps.tag.outputs.name }}"
-          mkdir -p dist
           cd dist
           zip -r "../switch-lite-rumble-${TAG}.zip" sd/ tools/
           cd ..
           ls -lh "switch-lite-rumble-${TAG}.zip"
 
-      # Upload artifact so you can grab it even without a tagged release
-      - name: Upload artifact
+      - name: Upload artifact (available without a release)
         uses: actions/upload-artifact@v4
         with:
           name: switch-lite-rumble-${{ steps.tag.outputs.name }}
           path: switch-lite-rumble-*.zip
           retention-days: 14
 
-      # ----------------------------------------------------------------
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -165,15 +169,15 @@ jobs:
             ---
 
             ### fs-rail-keepalive — Discovery mode (по умолчанию)
-            Сигнатуры в `patches.h` отключены — модуль только пишет кандидатов
-            в `sdmc:/fs-rail-keepalive.log`. Как получить реальные сигнатуры:
+            Сигнатуры в `patches.h` отключены — модуль только пишет кандидатов в `sdmc:/fs-rail-keepalive.log`.
+            Как получить реальные сигнатуры:
             1. `nxdumptool` → System Titles → fs → ExeFS section dump
             2. `python3 tools/find_offsets.py main --emit-signature`
-            3. Вставить результат в `source/patches.h`, `enabled=true`, пересобрать
+            3. Вставить в `source/patches.h`, `enabled=true`, пересобрать
 
             ### tools/
-            - `find_offsets.py` — поиск сигнатур в NSO-дампе (nxdumptool)
-            - `mk_ips.py`       — генерация IPS-патча по найденным офсетам
+            - `find_offsets.py` — поиск сигнатур в NSO-дампе
+            - `mk_ips.py`       — генерация IPS-патча
           files: switch-lite-rumble-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
