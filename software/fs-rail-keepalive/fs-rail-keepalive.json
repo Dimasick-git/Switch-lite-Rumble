@@ -1,0 +1,48 @@
+{
+    "name": "fs-rail-keepalive",
+    "title_id": "0x0100000000ABE101",
+    "title_id_range_min": "0x0100000000ABE101",
+    "title_id_range_max": "0x0100000000ABE101",
+    "main_thread_stack_size": "0x8000",
+    "main_thread_priority": 49,
+    "default_cpu_id": 3,
+    "process_category": 0,
+    "is_retail": true,
+    "pool_partition": 2,
+    "is_64_bit": true,
+    "address_space_type": 3,
+    "filesystem_access": {
+        "permissions": "0xFFFFFFFFFFFFFFFF"
+    },
+    "service_access": ["fsp-srv", "pm:dmnt"],
+    "service_host": [],
+    "kernel_capabilities": [
+        {
+            "type": "kernel_flags",
+            "value": {
+                "highest_thread_priority": 63,
+                "lowest_thread_priority": 24,
+                "highest_cpu_id": 3,
+                "lowest_cpu_id": 0
+            }
+        },
+        {
+            "type": "syscalls",
+            "value": {
+                "svcSleepThread": "0x0B",
+                "svcGetSystemTick": "0x1E",
+                "svcCloseHandle": "0x16",
+                "svcConnectToNamedPort": "0x1F",
+                "svcSendSyncRequest": "0x21",
+                "svcGetInfo": "0x29",
+                "svcQueryMemory": "0x06",
+                "svcDebugActiveProcess": "0x60",
+                "svcGetDebugEvent": "0x63",
+                "svcContinueDebugEvent": "0x64",
+                "svcQueryDebugProcessMemory": "0x69",
+                "svcReadDebugProcessMemory": "0x6A",
+                "svcWriteDebugProcessMemory": "0x6B"
+            }
+        }
+    ]
+}
