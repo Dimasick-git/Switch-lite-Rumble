@@ -3,7 +3,7 @@
 find_offsets.py -- locate fs power-gate patch sites by byte-pattern search.
 
 Usage:
-    python3 find_offsets.py <fs_decompressed.bin> [--verbose]
+    python3 find_offsets.py <fs_decompressed.bin> [--verbose] [--emit-signature]
 
 Input: a decompressed fs NSO flat binary.  Decompress with nso2elf or nx2elf.
 The tool strips the 0x100-byte NSO header automatically if the magic is present.
@@ -19,6 +19,10 @@ Each site is identified by searching for a BL immediately followed by a
 CBZ/CBNZ that branches to an error/power-cut path.  The instruction to NOP
 is always the CBZ/CBNZ (4 bytes after the BL match start).
 
+With --emit-signature, also prints a portable byte PATTERN around each
+candidate (ARM64 branch immediates auto-masked as "..") ready to paste into
+software/fs-rail-keepalive/source/patches.h for version-agnostic matching.
+
 Expect 10-30 candidates per pattern; cross-check the short list with a
 disassembler (Ghidra / Binary Ninja).  The target is the site whose error
 branch leads to a PowerOff / LDO-disable call chain.
@@ -30,6 +34,10 @@ from pathlib import Path
 NSO_MAGIC = b"NSO0"
 NSO_HEADER_SIZE = 0x100
 NOP_BYTES = bytes.fromhex("1F2003D5")
+
+# How many instructions of context to include on each side in a signature.
+SIG_WORDS_BEFORE = 4
+SIG_WORDS_AFTER = 2
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +105,49 @@ def disasm_brief(w: int, off: int) -> str:
             tgt = branch_target(off, w)
             return f"{mnem}{reg}, 0x{tgt & 0xFFFFFFFF:08X}"
     return f"??   0x{w:08X}"
+
+
+# ---------------------------------------------------------------------------
+# Signature emission (portable byte pattern with immediates masked)
+# ---------------------------------------------------------------------------
+
+def _word_sig_bytes(w: int):
+    """
+    Return a list of 4 pattern tokens ("xx" hex or "..") for one instruction,
+    little-endian, masking the bytes that hold a variable immediate so the
+    signature stays portable across builds.
+
+      - BL: entire imm26 varies (and bleeds into the opcode byte) -> 4 wildcards.
+      - CBZ/CBNZ: imm19+Rt occupy bytes 0..2; only the opcode byte (3) is fixed.
+      - Anything else: assumed stable -> emit literal bytes. (Refine by hand if
+        the instruction contains an address/immediate that moves between builds,
+        e.g. ADRP/ADD-lo or a literal LDR.)
+    """
+    b = [(w >> 0) & 0xFF, (w >> 8) & 0xFF, (w >> 16) & 0xFF, (w >> 24) & 0xFF]
+    if is_bl(w):
+        return ["..", "..", "..", ".."]
+    if is_any_cbz_cbnz(w):
+        return ["..", "..", "..", f"{b[3]:02x}"]
+    return [f"{b[i]:02x}" for i in range(4)]
+
+def emit_signature(text: bytes, off_cbz: int):
+    """
+    Build a pasteable signature window centred on the BL (off_cbz-4) + CBZ/CBNZ.
+    Returns (pattern_str, patch_offset) where patch_offset is the byte offset
+    from the START of the pattern to the CBZ/CBNZ (the instruction to NOP).
+    """
+    off_bl = off_cbz - 4
+    start = off_bl - SIG_WORDS_BEFORE * 4
+    end   = off_cbz + 4 + SIG_WORDS_AFTER * 4
+    if start < 0:
+        start = 0
+    tokens = []
+    o = start
+    while o < end and o + 4 <= len(text):
+        tokens.extend(_word_sig_bytes(_word(text, o)))
+        o += 4
+    patch_offset = off_cbz - start   # where the CBZ/CBNZ sits in the pattern
+    return " ".join(tokens), patch_offset
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +226,7 @@ def search_site(text: bytes, site: Site, verbose: bool) -> list:
 
 def main():
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
+    emit_sig = "--emit-signature" in sys.argv
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
 
     if not args:
@@ -215,6 +267,10 @@ def main():
                   f"{disasm_brief(wbl,  off_bl):<32s}  "
                   f"{disasm_brief(wcbz, off_cbz):<32s}"
                   f"  branch->0x{tgt:08X}")
+            if emit_sig:
+                pat, patch_off = emit_signature(text, off_cbz)
+                print(f"      signature : {pat}")
+                print(f"      patch_off : {patch_off}  (bytes from pattern start to the CBZ/CBNZ)")
 
         if len(hits) > 8:
             print(f"  ... and {len(hits)-8} more (use --verbose to see all)")
@@ -225,12 +281,18 @@ def main():
                 tgt = branch_target(off_cbz, wcbz)
                 print(f"  offset 0x{off_cbz:08X}  {disasm_brief(wbl, off_bl):<32s}  "
                       f"{disasm_brief(wcbz, off_cbz):<32s}  branch->0x{tgt:08X}")
+                if emit_sig:
+                    pat, patch_off = emit_signature(text, off_cbz)
+                    print(f"      signature : {pat}")
+                    print(f"      patch_off : {patch_off}")
 
     print()
     print("=" * 72)
     print("Next step: open the binary in Ghidra/Binary Ninja and verify which")
     print("candidate's branch target leads to a PowerOff / LDO-disable chain.")
-    print("Record confirmed offsets in offsets/<version>.json, then run mk_ips.py.")
+    print("For a pinned firmware: record the offset in offsets/<version>.json and")
+    print("run mk_ips.py. For 'any HOS version': paste the --emit-signature output")
+    print("into software/fs-rail-keepalive/source/patches.h.")
 
 
 if __name__ == "__main__":
