@@ -1,0 +1,179 @@
+# Build all sysmodules with devkitPro and publish a GitHub Release.
+#
+# Triggers:
+#   - Push a tag  v*        -> full release (prerelease=false)
+#   - workflow_dispatch     -> manual run, tag name from input (prerelease=true)
+#
+# SD card layout in the output zip:
+#   sd/atmosphere/contents/<title_id>/exefs.nsp
+#   sd/atmosphere/contents/<title_id>/flags/boot2.flag
+# Plus a tools/ folder with the Python PC utilities.
+
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Тег релиза (напр. v0.1.0-dev)'
+        required: true
+        default: 'v0.1.0-dev'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build sysmodules & publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      # ----------------------------------------------------------------
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # ----------------------------------------------------------------
+      - name: Install devkitPro (switch-dev)
+        uses: devkitPro/action-setup@v1
+        with:
+          packages: switch-dev
+
+      # ----------------------------------------------------------------
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.event.inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ----------------------------------------------------------------
+      - name: Build rumble-tap-sysmodule
+        run: make -C software/rumble-tap-sysmodule -j$(nproc)
+
+      - name: Build fs-rail-keepalive
+        run: make -C software/fs-rail-keepalive -j$(nproc)
+
+      # Uses Atmosphere system_module.mk + libstratosphere submodule.
+      # continue-on-error so a libstratosphere toolchain issue doesn't block the release.
+      - name: Build rumble-logger-mitm
+        run: make -C software/rumble-logger-mitm -j$(nproc)
+        continue-on-error: true
+
+      # ----------------------------------------------------------------
+      - name: Stage SD card layout
+        run: |
+          set -e
+          SD=dist/sd
+
+          # ---- rumble-tap-sysmodule  (0100000000ABE100) ----
+          SRC=software/rumble-tap-sysmodule/rumble-tap-sysmodule.nsp
+          if [ -f "$SRC" ]; then
+            ID=0100000000ABE100
+            mkdir -p "$SD/atmosphere/contents/$ID/flags"
+            cp "$SRC" "$SD/atmosphere/contents/$ID/exefs.nsp"
+            touch      "$SD/atmosphere/contents/$ID/flags/boot2.flag"
+            echo "[OK] rumble-tap-sysmodule -> $ID"
+          else
+            echo "[WARN] rumble-tap-sysmodule.nsp missing -- build failed?"
+          fi
+
+          # ---- fs-rail-keepalive  (0100000000ABE101) ----
+          SRC=software/fs-rail-keepalive/fs-rail-keepalive.nsp
+          if [ -f "$SRC" ]; then
+            ID=0100000000ABE101
+            mkdir -p "$SD/atmosphere/contents/$ID/flags"
+            cp "$SRC" "$SD/atmosphere/contents/$ID/exefs.nsp"
+            touch      "$SD/atmosphere/contents/$ID/flags/boot2.flag"
+            echo "[OK] fs-rail-keepalive -> $ID"
+          else
+            echo "[WARN] fs-rail-keepalive.nsp missing -- build failed?"
+          fi
+
+          # ---- rumble-logger-mitm  (0100000000ABE200) ----
+          # Atmosphere system_module.mk may place the NSP in out/ or cwd;
+          # discover by searching the tree (skip libstratosphere source tree).
+          MITM=$(find software/rumble-logger-mitm \
+                   \( -path '*/libstratosphere/*' -prune \) -o \
+                   -name '*.nsp' -print 2>/dev/null | head -1)
+          if [ -n "$MITM" ]; then
+            ID=0100000000ABE200
+            mkdir -p "$SD/atmosphere/contents/$ID/flags"
+            cp "$MITM" "$SD/atmosphere/contents/$ID/exefs.nsp"
+            touch       "$SD/atmosphere/contents/$ID/flags/boot2.flag"
+            echo "[OK] rumble-logger-mitm -> $ID  (from $MITM)"
+          else
+            echo "[WARN] rumble-logger-mitm NSP not found (build may have failed -- see log above)"
+          fi
+
+          # ---- PC tools: Python scripts, no build needed ----
+          mkdir -p dist/tools
+          cp software/fs-lotus3-patch/tools/*.py dist/tools/
+
+          # ---- Summary ----
+          echo ""
+          echo "=== staged files ==="
+          find dist -type f | sort
+
+      # ----------------------------------------------------------------
+      - name: Pack release ZIP
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          mkdir -p dist
+          cd dist
+          zip -r "../switch-lite-rumble-${TAG}.zip" sd/ tools/
+          cd ..
+          ls -lh "switch-lite-rumble-${TAG}.zip"
+
+      # Upload artifact so you can grab it even without a tagged release
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: switch-lite-rumble-${{ steps.tag.outputs.name }}
+          path: switch-lite-rumble-*.zip
+          retention-days: 14
+
+      # ----------------------------------------------------------------
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ steps.tag.outputs.name }}
+          name:       Switch Lite Rumble ${{ steps.tag.outputs.name }}
+          draft:      false
+          prerelease: ${{ github.ref_type != 'tag' }}
+          generate_release_notes: false
+          body: |
+            ## Установка
+
+            Разархивируй `switch-lite-rumble-*.zip` и скопируй папку `sd/` в корень SD-карты.
+
+            | Сисмодуль | Title ID |
+            |-----------|----------|
+            | `rumble-tap-sysmodule` | `0100000000ABE100` |
+            | `fs-rail-keepalive` | `0100000000ABE101` |
+            | `rumble-logger-mitm` | `0100000000ABE200` |
+
+            Все сисмодули авто-стартуют при буте через `boot2.flag`.
+
+            ---
+
+            ### fs-rail-keepalive — Discovery mode (по умолчанию)
+            Сигнатуры в `patches.h` отключены — модуль только пишет кандидатов
+            в `sdmc:/fs-rail-keepalive.log`. Как получить реальные сигнатуры:
+            1. `nxdumptool` → System Titles → fs → ExeFS section dump
+            2. `python3 tools/find_offsets.py main --emit-signature`
+            3. Вставить результат в `source/patches.h`, `enabled=true`, пересобрать
+
+            ### tools/
+            - `find_offsets.py` — поиск сигнатур в NSO-дампе (nxdumptool)
+            - `mk_ips.py`       — генерация IPS-патча по найденным офсетам
+          files: switch-lite-rumble-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
