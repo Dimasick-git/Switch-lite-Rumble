@@ -1,222 +1,209 @@
 #!/usr/bin/env python3
 """
-find_offsets.py -- locate fs power-gate patch sites by byte-pattern search.
+find_offsets.py -- locate fs power-gate patch sites, with nxdumptool support.
 
 Usage:
-    python3 find_offsets.py <fs_decompressed.bin> [--verbose] [--emit-signature]
+    # from an nxdumptool ExeFS dump (recommended):
+    python3 find_offsets.py /path/to/exefs/main          # raw NSO file
+    python3 find_offsets.py /path/to/exefs/main.nso      # same, .nso extension
 
-Input: a decompressed fs NSO flat binary.  Decompress with nso2elf or nx2elf.
-The tool strips the 0x100-byte NSO header automatically if the magic is present.
+    # from a nxdumptool 'Program NCA' plaintext dump:
+    python3 find_offsets.py fs_main.nso
 
-Outputs candidate .text offsets (suitable for use in offsets/*.json) for each
-of the three power-gate branch sites in nn::fs::detail::IDeviceOperator:
+    # from an already-decompressed flat binary (legacy):
+    python3 find_offsets.py fs_decompressed.bin
 
-  Site 1 -- IsGameCardInserted : CBZ/CBNZ after the polling call
-  Site 2 -- GetGameCardHandle  : CBNZ X0 after handle-acquisition BL
+    # add --emit-signature for portable patterns (paste into patches.h):
+    python3 find_offsets.py fs_main.nso --emit-signature
+
+nxdumptool workflow (on console):
+    1. Launch nxdumptool from hbmenu.
+    2. Browse System Data Archive -> fs -> NCA/NCA FS dump options
+       -> Program #0 -> ExeFS section -> Start dump.
+       (Or: System Titles -> fs -> Dump ExeFS)
+    3. Copy sdmc:/nxdt_rw_proc/.../<build_id>/exefs/main to PC.
+    4. Run this script on that 'main' file.
+
+The script auto-detects NSO format (magic "NSO0") and decompresses
+.text / .rodata / .data sections with LZ4 if the compression flag is set.
+
+No external dependencies for LZ4 -- a minimal block decompressor is built in.
+Optionally install lz4 for faster decoding: pip install lz4
+
+Searches for BL + CBZ/CBNZ X0 pairs at each of the three power-gate sites:
+  Site 1 -- IsGameCardInserted:   CBZ/CBNZ W0 after polling call
+  Site 2 -- GetGameCardHandle:    CBNZ X0 after handle-acquisition BL
   Site 3 -- GetGameCardAttribute: CBNZ X0 after attribute-check BL
 
-Each site is identified by searching for a BL immediately followed by a
-CBZ/CBNZ that branches to an error/power-cut path.  The instruction to NOP
-is always the CBZ/CBNZ (4 bytes after the BL match start).
-
-With --emit-signature, also prints a portable byte PATTERN around each
-candidate (ARM64 branch immediates auto-masked as "..") ready to paste into
-software/fs-rail-keepalive/source/patches.h for version-agnostic matching.
-
-Expect 10-30 candidates per pattern; cross-check the short list with a
-disassembler (Ghidra / Binary Ninja).  The target is the site whose error
-branch leads to a PowerOff / LDO-disable call chain.
+With --emit-signature prints a portable byte pattern (ARM64 branch immediates
+masked as "..") ready to paste into
+  software/fs-rail-keepalive/source/patches.h
 """
 import sys
 import struct
 from pathlib import Path
 
-NSO_MAGIC = b"NSO0"
+NSO_MAGIC       = b"NSO0"
 NSO_HEADER_SIZE = 0x100
-NOP_BYTES = bytes.fromhex("1F2003D5")
+NOP_BYTES       = bytes.fromhex("1F2003D5")
 
-# How many instructions of context to include on each side in a signature.
 SIG_WORDS_BEFORE = 4
-SIG_WORDS_AFTER = 2
+SIG_WORDS_AFTER  = 2
 
 
 # ---------------------------------------------------------------------------
-# ARM64 instruction decoders
+# Minimal LZ4 block decompressor (NSO sections use raw LZ4 blocks, no frame)
 # ---------------------------------------------------------------------------
 
-def _word(data: bytes, off: int) -> int:
-    return struct.unpack_from("<I", data, off)[0]
+def _lz4_block_decompress(src: bytes, max_out: int) -> bytes:
+    """Pure-Python LZ4 block decompressor. Replaces lz4.block if not installed."""
+    out  = bytearray()
+    pos  = 0
+    slen = len(src)
+    while pos < slen:
+        tok  = src[pos]; pos += 1
+        llen = tok >> 4
+        if llen == 15:
+            while pos < slen:
+                x = src[pos]; pos += 1
+                llen += x
+                if x != 255: break
+        out.extend(src[pos:pos + llen]); pos += llen
+        if pos >= slen:
+            break
+        off = src[pos] | (src[pos + 1] << 8); pos += 2
+        mlen = (tok & 0xF) + 4
+        if (tok & 0xF) == 15:
+            while pos < slen:
+                x = src[pos]; pos += 1
+                mlen += x
+                if x != 255: break
+        m = len(out) - off
+        for _ in range(mlen):
+            out.append(out[m]); m += 1
+        if len(out) >= max_out:
+            break
+    return bytes(out[:max_out])
 
-def is_bl(w: int) -> bool:
-    """BL <imm26>: bits[31:26] == 0b100101"""
-    return (w & 0xFC000000) == 0x94000000
 
-def is_cbz_64(w: int, reg: int = None) -> bool:
-    """CBZ Xn: bits[31:24]=0xB4, bits[4:0]=reg (None=any)"""
-    if (w & 0xFF000000) != 0xB4000000:
-        return False
-    return reg is None or (w & 0x1F) == reg
+try:
+    import lz4.block as _lz4
+    def lz4_block_decompress(src, max_out):
+        return _lz4.decompress(src, uncompressed_size=max_out)
+except ImportError:
+    lz4_block_decompress = _lz4_block_decompress
 
-def is_cbnz_64(w: int, reg: int = None) -> bool:
-    """CBNZ Xn: bits[31:24]=0xB5"""
-    if (w & 0xFF000000) != 0xB5000000:
-        return False
-    return reg is None or (w & 0x1F) == reg
 
-def is_cbz_32(w: int, reg: int = None) -> bool:
-    """CBZ Wn: bits[31:24]=0x34"""
-    if (w & 0xFF000000) != 0x34000000:
-        return False
-    return reg is None or (w & 0x1F) == reg
+# ---------------------------------------------------------------------------
+# NSO loader
+# ---------------------------------------------------------------------------
 
-def is_cbnz_32(w: int, reg: int = None) -> bool:
-    """CBNZ Wn: bits[31:24]=0x35"""
-    if (w & 0xFF000000) != 0x35000000:
-        return False
-    return reg is None or (w & 0x1F) == reg
+def _u32le(data, off):
+    return struct.unpack_from('<I', data, off)[0]
 
-def is_any_cbz_cbnz(w: int) -> bool:
-    return (is_cbz_64(w) or is_cbnz_64(w) or
-            is_cbz_32(w) or is_cbnz_32(w))
 
-def branch_target(base_offset: int, w: int) -> int:
-    """Decode the branch target offset from a CBZ/CBNZ instruction."""
+def load_nso(raw: bytes):
+    """
+    Parse an NSO file from nxdumptool (or hbloader).  Returns (text, build_id).
+    The NSO0 header is 0x100 bytes followed by the compressed/raw section data.
+    """
+    if raw[:4] != NSO_MAGIC:
+        return raw, None                     # assume pre-decompressed flat binary
+
+    flags               = _u32le(raw, 0x0C)
+    text_foff           = _u32le(raw, 0x10)
+    text_size           = _u32le(raw, 0x18)  # decompressed size
+    text_compressed_sz  = _u32le(raw, 0x60)
+    build_id            = raw[0x40:0x50]     # first 16 bytes (full id = 0x40:0x60)
+
+    if flags & 1:                            # .text is LZ4 compressed
+        src = raw[text_foff:text_foff + text_compressed_sz]
+        text = lz4_block_decompress(src, text_size)
+    else:
+        text = raw[text_foff:text_foff + text_size]
+
+    full_build_id = raw[0x40:0x60]           # 32 bytes
+    return text, full_build_id
+
+
+# ---------------------------------------------------------------------------
+# ARM64 helpers
+# ---------------------------------------------------------------------------
+
+def _word(data, off):
+    return struct.unpack_from('<I', data, off)[0]
+
+def is_bl(w):      return (w & 0xFC000000) == 0x94000000
+def is_cbz64(w,r=None): return (w & 0xFF000000) == 0xB4000000 and (r is None or (w&0x1F)==r)
+def is_cbnz64(w,r=None):return (w & 0xFF000000) == 0xB5000000 and (r is None or (w&0x1F)==r)
+def is_cbz32(w,r=None): return (w & 0xFF000000) == 0x34000000 and (r is None or (w&0x1F)==r)
+def is_cbnz32(w,r=None):return (w & 0xFF000000) == 0x35000000 and (r is None or (w&0x1F)==r)
+def is_cb(w):      return is_cbz64(w) or is_cbnz64(w) or is_cbz32(w) or is_cbnz32(w)
+
+def branch_target(base, w):
     imm19 = (w >> 5) & 0x7FFFF
-    if imm19 & 0x40000:            # sign-extend
-        imm19 |= ~0x7FFFF
-    return base_offset + imm19 * 4
+    if imm19 & 0x40000: imm19 |= ~0x7FFFF
+    return base + imm19 * 4
 
-def disasm_brief(w: int, off: int) -> str:
-    """One-line human-readable for BL / CBZ / CBNZ."""
+def disasm(w, off):
     if is_bl(w):
         imm26 = w & 0x3FFFFFF
-        if imm26 & 0x2000000:
-            imm26 |= ~0x3FFFFFF
-        target = off + imm26 * 4
-        return f"BL   0x{target & 0xFFFFFFFF:08X}"
-    for fn, mnem in [
-        (is_cbz_64,  "CBZ  X"),
-        (is_cbnz_64, "CBNZ X"),
-        (is_cbz_32,  "CBZ  W"),
-        (is_cbnz_32, "CBNZ W"),
-    ]:
+        if imm26 & 0x2000000: imm26 |= ~0x3FFFFFF
+        return f"BL   0x{(off + imm26*4) & 0xFFFFFFFF:08X}"
+    for fn, mn in [(is_cbz64,'CBZ  X'),(is_cbnz64,'CBNZ X'),(is_cbz32,'CBZ  W'),(is_cbnz32,'CBNZ W')]:
         if fn(w):
-            reg = w & 0x1F
-            tgt = branch_target(off, w)
-            return f"{mnem}{reg}, 0x{tgt & 0xFFFFFFFF:08X}"
-    return f"??   0x{w:08X}"
+            return f"{mn}{w&0x1F}, 0x{branch_target(off,w)&0xFFFFFFFF:08X}"
+    return f"???? 0x{w:08X}"
 
 
 # ---------------------------------------------------------------------------
-# Signature emission (portable byte pattern with immediates masked)
+# Signature emission
 # ---------------------------------------------------------------------------
 
-def _word_sig_bytes(w: int):
-    """
-    Return a list of 4 pattern tokens ("xx" hex or "..") for one instruction,
-    little-endian, masking the bytes that hold a variable immediate so the
-    signature stays portable across builds.
+def _sig_tokens(w):
+    b = [(w>>(8*i))&0xFF for i in range(4)]
+    if is_bl(w):   return ['..','..','..','..']    # entire 4 bytes vary
+    if is_cb(w):   return ['..','..','..', f'{b[3]:02x}']  # imm19+Rt vary
+    return [f'{b[i]:02x}' for i in range(4)]
 
-      - BL: entire imm26 varies (and bleeds into the opcode byte) -> 4 wildcards.
-      - CBZ/CBNZ: imm19+Rt occupy bytes 0..2; only the opcode byte (3) is fixed.
-      - Anything else: assumed stable -> emit literal bytes. (Refine by hand if
-        the instruction contains an address/immediate that moves between builds,
-        e.g. ADRP/ADD-lo or a literal LDR.)
-    """
-    b = [(w >> 0) & 0xFF, (w >> 8) & 0xFF, (w >> 16) & 0xFF, (w >> 24) & 0xFF]
-    if is_bl(w):
-        return ["..", "..", "..", ".."]
-    if is_any_cbz_cbnz(w):
-        return ["..", "..", "..", f"{b[3]:02x}"]
-    return [f"{b[i]:02x}" for i in range(4)]
-
-def emit_signature(text: bytes, off_cbz: int):
-    """
-    Build a pasteable signature window centred on the BL (off_cbz-4) + CBZ/CBNZ.
-    Returns (pattern_str, patch_offset) where patch_offset is the byte offset
-    from the START of the pattern to the CBZ/CBNZ (the instruction to NOP).
-    """
-    off_bl = off_cbz - 4
-    start = off_bl - SIG_WORDS_BEFORE * 4
-    end   = off_cbz + 4 + SIG_WORDS_AFTER * 4
-    if start < 0:
-        start = 0
-    tokens = []
+def emit_signature(text, off_cbz):
+    start = max(0, off_cbz - SIG_WORDS_BEFORE * 4)
+    end   = min(len(text), off_cbz + 4 + SIG_WORDS_AFTER * 4)
+    toks  = []
     o = start
     while o < end and o + 4 <= len(text):
-        tokens.extend(_word_sig_bytes(_word(text, o)))
-        o += 4
-    patch_offset = off_cbz - start   # where the CBZ/CBNZ sits in the pattern
-    return " ".join(tokens), patch_offset
+        toks.extend(_sig_tokens(_word(text, o))); o += 4
+    return ' '.join(toks), off_cbz - start
 
 
 # ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
 
-class Site:
-    def __init__(self, name, desc, bl_before, cbz_reg=None, want_x64=True):
-        self.name = name
-        self.desc = desc
-        self.bl_before = bl_before   # True = BL must precede the CBZ
-        self.cbz_reg = cbz_reg       # None = any register
-        self.want_x64 = want_x64     # True = 64-bit Xn; False = 32-bit Wn
-
-
 SITES = [
-    Site(
-        "IsGameCardInserted_false_branch",
-        "CBZ/CBNZ Wn after polling BL -- returns false, cuts rails",
-        bl_before=True,
-        cbz_reg=0,
-        want_x64=False,   # bool return in W0
-    ),
-    Site(
-        "GetGameCardHandle_power_gate_branch",
-        "CBNZ X0 after handle-acquisition BL -- Result != 0, cuts rails",
-        bl_before=True,
-        cbz_reg=0,
-        want_x64=True,    # Result in X0
-    ),
-    Site(
-        "GetGameCardAttribute_fail_branch",
-        "CBNZ X0 after attribute-check BL -- bad card type, cuts rails",
-        bl_before=True,
-        cbz_reg=0,
-        want_x64=True,
-    ),
+    ('IsGameCardInserted_false_branch',
+     'CBZ/CBNZ W0 after polling BL -- false return cuts rails',
+     False, 0, True),
+    ('GetGameCardHandle_power_gate_branch',
+     'CBNZ X0 after handle-acquisition BL -- Result != 0 cuts rails',
+     True,  0, False),
+    ('GetGameCardAttribute_fail_branch',
+     'CBNZ X0 after attribute-check BL -- bad card type cuts rails',
+     True,  0, False),
 ]
 
-
-def search_site(text: bytes, site: Site, verbose: bool) -> list:
-    """
-    Find all BL+CBZ/CBNZ pairs where:
-      - word[i]   is a BL instruction
-      - word[i+1] is CBZ/CBNZ on the expected register / size
-    Returns list of (text_offset_of_cbz, bl_word, cbz_word).
-    """
+def search(text, want_x64, reg):
     hits = []
     n = len(text) // 4
     for i in range(n - 1):
-        off_bl  = i * 4
-        off_cbz = off_bl + 4
-        wbl  = _word(text, off_bl)
-        wcbz = _word(text, off_cbz)
-
-        if not is_bl(wbl):
-            continue
-
-        matched = False
-        if site.want_x64:
-            if is_cbnz_64(wcbz, site.cbz_reg) or is_cbz_64(wcbz, site.cbz_reg):
-                matched = True
+        wbl  = _word(text, i*4)
+        wcbz = _word(text, i*4 + 4)
+        if not is_bl(wbl): continue
+        if want_x64:
+            if not (is_cbnz64(wcbz, reg) or is_cbz64(wcbz, reg)): continue
         else:
-            if is_cbnz_32(wcbz, site.cbz_reg) or is_cbz_32(wcbz, site.cbz_reg):
-                matched = True
-
-        if matched:
-            hits.append((off_cbz, wbl, wcbz))
-
+            if not (is_cbnz32(wcbz, reg) or is_cbz32(wcbz, reg)): continue
+        hits.append((i*4 + 4, wbl, wcbz))
     return hits
 
 
@@ -225,75 +212,68 @@ def search_site(text: bytes, site: Site, verbose: bool) -> list:
 # ---------------------------------------------------------------------------
 
 def main():
-    verbose = "--verbose" in sys.argv or "-v" in sys.argv
-    emit_sig = "--emit-signature" in sys.argv
-    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    verbose  = '--verbose' in sys.argv or '-v' in sys.argv
+    emit_sig = '--emit-signature' in sys.argv
+    args     = [a for a in sys.argv[1:] if not a.startswith('-')]
 
     if not args:
         print(__doc__)
         sys.exit(1)
 
     path = Path(args[0])
-    raw = path.read_bytes()
+    raw  = path.read_bytes()
 
-    # Strip NSO header if present
-    if raw[:4] == NSO_MAGIC:
-        text = raw[NSO_HEADER_SIZE:]
-        print(f"NSO header detected; .text starts at file offset 0x{NSO_HEADER_SIZE:X}")
+    is_nso = raw[:4] == NSO_MAGIC
+    print(f"Input: {path.name} ({len(raw):,} bytes) -- {'NSO format' if is_nso else 'flat binary'}")
+
+    text, build_id = load_nso(raw)
+
+    if build_id is not None:
+        bid_hex = build_id.hex().upper()
+        bid_short = bid_hex[:16]   # first 8 bytes = Atmosphere IPS filename
+        print(f"Build ID: {bid_hex}")
+        print(f"IPS filename: atmosphere/exefs_patches/fs/{bid_short}.ips")
     else:
-        text = raw
-        print("No NSO magic; treating entire file as .text")
+        print("Build ID: unknown (pre-decompressed flat binary)")
 
-    print(f"Searching {path.name} ({len(text):,} bytes)\n")
-    print("NOP payload to apply at each offset: 1F 20 03 D5\n")
-    print("=" * 72)
+    print(f"Searching .text ({len(text):,} bytes)")
+    print(f"NOP patch: 1F 20 03 D5")
+    print('=' * 72)
 
-    for site in SITES:
-        hits = search_site(text, site, verbose)
-        print(f"\n[{site.name}]")
-        print(f"  {site.desc}")
-        print(f"  {len(hits)} candidate(s) -- patch offset = offset of the CBZ/CBNZ")
-
+    for name, desc, want_x64, reg, _unused in SITES:
+        hits = search(text, not want_x64, reg)   # want_x64=True -> 64-bit regs
+        # fix: 2nd/3rd sites want X0 (64-bit), 1st wants W0 (32-bit)
+        hits = search(text, want_x64=(not (name=='IsGameCardInserted_false_branch')), reg=0)
+        print(f"\n[{name}]")
+        print(f"  {desc}")
+        print(f"  {len(hits)} candidate(s)")
         if not hits:
-            print("  -> NO MATCHES. Check decompression or adjust pattern.")
+            print("  -> NO MATCHES. Check input or try --verbose.")
             continue
-
-        # Show at most 8 candidates to keep output readable
-        show = hits[:8]
-        for (off_cbz, wbl, wcbz) in show:
+        for off_cbz, wbl, wcbz in hits[:8]:
             off_bl = off_cbz - 4
-            tgt = branch_target(off_cbz, wcbz)
-            print(f"  offset 0x{off_cbz:08X}  |  "
-                  f"{disasm_brief(wbl,  off_bl):<32s}  "
-                  f"{disasm_brief(wcbz, off_cbz):<32s}"
-                  f"  branch->0x{tgt:08X}")
+            print(f"  0x{off_cbz:08X}  {disasm(wbl, off_bl):<38} {disasm(wcbz, off_cbz)}")
             if emit_sig:
-                pat, patch_off = emit_signature(text, off_cbz)
-                print(f"      signature : {pat}")
-                print(f"      patch_off : {patch_off}  (bytes from pattern start to the CBZ/CBNZ)")
-
+                pat, poff = emit_signature(text, off_cbz)
+                print(f"    sig: {pat}")
+                print(f"    patch_offset: {poff}")
         if len(hits) > 8:
-            print(f"  ... and {len(hits)-8} more (use --verbose to see all)")
-
+            print(f"  ... and {len(hits)-8} more (--verbose to see all)")
         if verbose:
-            for (off_cbz, wbl, wcbz) in hits[8:]:
-                off_bl = off_cbz - 4
-                tgt = branch_target(off_cbz, wcbz)
-                print(f"  offset 0x{off_cbz:08X}  {disasm_brief(wbl, off_bl):<32s}  "
-                      f"{disasm_brief(wcbz, off_cbz):<32s}  branch->0x{tgt:08X}")
+            for off_cbz, wbl, wcbz in hits[8:]:
+                print(f"  0x{off_cbz:08X}  {disasm(wbl, off_cbz-4):<38} {disasm(wcbz, off_cbz)}")
                 if emit_sig:
-                    pat, patch_off = emit_signature(text, off_cbz)
-                    print(f"      signature : {pat}")
-                    print(f"      patch_off : {patch_off}")
+                    pat, poff = emit_signature(text, off_cbz)
+                    print(f"    sig: {pat}  patch_offset: {poff}")
 
     print()
-    print("=" * 72)
-    print("Next step: open the binary in Ghidra/Binary Ninja and verify which")
-    print("candidate's branch target leads to a PowerOff / LDO-disable chain.")
-    print("For a pinned firmware: record the offset in offsets/<version>.json and")
-    print("run mk_ips.py. For 'any HOS version': paste the --emit-signature output")
-    print("into software/fs-rail-keepalive/source/patches.h.")
+    print('=' * 72)
+    if build_id is not None:
+        print(f"To make the IPS patch, run mk_ips.py with the offsets above.")
+        print(f"IPS goes to: sdmc:/atmosphere/exefs_patches/fs/{bid_short}.ips")
+    print("For version-agnostic patching: paste --emit-signature output into")
+    print("  software/fs-rail-keepalive/source/patches.h  (set enabled=true)")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

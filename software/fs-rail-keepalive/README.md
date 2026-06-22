@@ -1,58 +1,102 @@
 # fs-rail-keepalive
 
 Version-agnostic runtime patcher for the `fs` cartridge power gate.
+Same idea as `sys-patch`: match by byte pattern, not by build-id offset,
+so one signature survives HOS updates.
 
-Where [`../fs-lotus3-patch/`](../fs-lotus3-patch/) produces **build-id-specific
-IPS files** (one per HOS version), this sysmodule does the same job **at runtime
-by pattern matching**, so a single signature set survives HOS updates as long as
-the code around each gate site is unchanged. Same idea as `sys-patch`.
+**Two modes, auto-selected by `patches.h`:**
 
-> **Scaffold + safe no-op by default.** Written to libnx sysmodule conventions,
-> not yet run on hardware. Ships with every signature disabled (`patches.h`), so
-> out of the box it attaches, logs, and patches **nothing**.
-
-## How it works
-
-1. `pmdmnt` resolves the `fs` process id.
-2. `svcDebugActiveProcess(fs_pid)` suspends fs and returns a debug handle.
-3. It walks memory with `svcQueryDebugProcessMemory`, and for each executable
-   (R-X) region reads it in overlapping windows and scans each signature.
-4. On a match it writes the patch (ARM64 NOP) with `svcWriteDebugProcessMemory`.
-5. Closing the debug handle resumes fs with the patches live.
-
-Power-gating runs on cartridge **insertion** (after boot), so patching the
-already-running fs in place is sufficient for later insertions.
-
-## IPS vs runtime - which to use
-
-| | `fs-lotus3-patch` (IPS) | `fs-rail-keepalive` (runtime) |
+| Mode | When | What it does |
 | :--- | :--- | :--- |
-| Binds to | one fs build id | a byte pattern |
-| Survives HOS update | no - re-extract offsets | yes, if code stable |
-| Applied by | Atmosphere loader at boot | this sysmodule after boot |
-| Needs debug SVCs | no | yes (in npdm) |
-| Best for | a pinned firmware | "works on whatever I'm on" |
+| **Discovery** | all `enabled=false` (default) | Scans fs .text, logs ALL BL+CBZ/CBNZ X0/W0 candidates with ready-to-paste signatures |
+| **Patch** | ≥1 `enabled=true` | Matches signatures, writes NOPs, resumes fs |
 
-They are interchangeable in effect. Use this one for the "any HOS version" goal;
-keep the IPS path for a frozen setup.
+---
 
-## Authoring signatures
+## Quick start: nxdumptool → signatures → patch
 
-You still extract the pattern once from a real fs binary - but unlike an offset,
-a good pattern keeps matching across versions.
+### Step 1 — dump the fs binary with nxdumptool (on console)
 
-```bash
-# dump + decompress fs (see ../fs-lotus3-patch/README.md), then:
-python3 ../fs-lotus3-patch/tools/find_offsets.py fs_decompressed.bin --emit-signature
+```
+Launch nxdumptool from hbmenu
+  -> System Titles
+  -> fs (0100000000000000)
+  -> NCA/NCA FS dump options
+  -> Program #0
+  -> ExeFS section data dump
+  -> Start NCA FS section data dump
 ```
 
-That prints a byte window around each candidate with immediate bytes already
-masked as `..`. Paste the chosen one into `source/patches.h`, set `patch_offset`
-to land on the branch to NOP, flip `enabled = true`, rebuild.
+This writes `sdmc:/nxdt_rw_proc/<title_id>/<build_id>/exefs/main` —
+a **decrypted, compressed NSO** file.
 
-Pattern syntax: space-separated hex, `..` = one wildcard byte. Anchor on stable
-instructions (STP/LDP/MOV/ADRP) - ARM64 branch immediates are not byte-aligned
-and cannot be pinned directly (see the note in `patches.h`).
+### Step 2a — analyse on PC (recommended for first run)
+
+Copy `main` to your PC and run:
+
+```bash
+python3 software/fs-lotus3-patch/tools/find_offsets.py main --emit-signature
+```
+
+The tool auto-detects the NSO format, decompresses `.text` with LZ4,
+prints candidate offsets, and with `--emit-signature` outputs ready-to-paste
+byte patterns. No dependencies needed (built-in LZ4); or `pip install lz4`
+for faster decoding.
+
+### Step 2b — discover directly on console (no PC)
+
+Install this sysmodule with all signatures **disabled** (the default).
+On boot it runs in **Discovery Mode**:
+
+1. Attaches to the running `fs` process via debug SVCs.
+2. Scans every R-X region for `BL + CBNZ/CBZ X0/W0` pairs.
+3. Logs each candidate with a ready-to-paste `signature:` block to
+   `sdmc:/fs-rail-keepalive.log`.
+
+Read the log and open the fs binary in Ghidra (use `main` from Step 1)
+to confirm which candidate's branch target leads to the PMIC power-off chain.
+
+### Step 3 — fill in patches.h
+
+Open `source/patches.h`. Copy one of the `CANDIDATE N:` blocks from the log
+or the `--emit-signature` output and paste it in:
+
+```c
+{
+    .name         = "GetGameCardHandle_power_gate_branch",
+    .pattern      = "f3 0f 1e f8 .. .. .. .. .. .. .. b5 ..",  // from log/tool
+    .patch_offset = 12,    // patch_off value from the log
+    .patch        = ARM64_NOP,
+    .enabled      = true,  // <-- flip to true
+},
+```
+
+Repeat for all three power-gate sites.  Rebuild and reinstall.
+
+### Step 4 — verify
+
+On next boot the module switches to **Patch Mode**, logs `N/3 patched`,
+and closes. Check `fs-rail-keepalive.log`.
+
+---
+
+## IPS path (alternative, pinned firmware only)
+
+If you stay on one HOS version permanently, use the static IPS approach
+instead — it's simpler and has no runtime overhead:
+
+```bash
+# Get the build_id from find_offsets.py output, then:
+python3 software/fs-lotus3-patch/tools/mk_ips.py \
+    --offset <off1> --offset <off2> --offset <off3> \
+    --build-id <BUILD_ID_FIRST_8_BYTES>
+# Copy the resulting .ips to:
+# sdmc:/atmosphere/exefs_patches/fs/<BUILD_ID>.ips
+```
+
+See [`../fs-lotus3-patch/README.md`](../fs-lotus3-patch/README.md).
+
+---
 
 ## Build
 
@@ -61,26 +105,26 @@ export DEVKITPRO=/opt/devkitpro
 make
 ```
 
-Produces `fs-rail-keepalive.nsp`.
-
-## Install (Atmosphere)
+## Install
 
 ```
 /atmosphere/contents/0100000000ABE101/exefs.nsp
 /atmosphere/contents/0100000000ABE101/flags/boot2.flag
 ```
 
-Reboot. Read `sdmc:/fs-rail-keepalive.log` for what matched and what was patched.
+Read `sdmc:/fs-rail-keepalive.log` after reboot.
+
+---
 
 ## Notes
 
-- `title_id` `0100000000ABE101` is a **placeholder** in the system-module range
-  (the sibling rumble-tap module uses `...E100`). Pick final IDs before release.
-- `FS_PROGRAM_ID` in `main.c` is `0x0100000000000000`. If `pmdmntGetProcessId`
-  fails, verify the fs program id for your firmware and update it.
-- The npdm grants `pm:dmnt` + the debug SVCs (`svcDebugActiveProcess`,
-  `svcQuery/Read/WriteDebugProcessMemory`). Debugging a system process also
-  requires Atmosphere's `enable_user_exception_handlers`/debug allowance typical
-  for sys-patch-style modules.
-- Open question unchanged: if Lotus3 has a hardware power timeout, NOPping fs is
-  not enough on its own. See [`../../docs/FS-LOTUS3.md`](../../docs/FS-LOTUS3.md) section 4.
+- `FS_PROGRAM_ID` in `main.c` = `0x0100000000000000`. If `pmdmntGetProcessId`
+  fails, verify for your firmware.
+- The npdm grants `pm:dmnt` and the debug SVCs (`svcDebugActiveProcess`,
+  `svcQuery/Read/WriteDebugProcessMemory`). Atmosphere grants these to
+  sysmodules with the right NPDM.
+- Discovery mode allocates one region buffer at a time (`malloc(mi.size)`)
+  and caps output at 256 candidates.
+- Open question: Lotus3 hardware timeout. If the ASIC cuts power lines
+  regardless of fs state, the NOPs alone aren't enough. See
+  `docs/FS-LOTUS3.md` section 4.
