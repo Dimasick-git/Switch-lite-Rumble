@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout (with submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 0
@@ -139,14 +139,14 @@ jobs:
           ls -lh "switch-lite-rumble-${TAG}.zip"
 
       - name: Upload artifact (available without a release)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: switch-lite-rumble-${{ steps.tag.outputs.name }}
           path: switch-lite-rumble-*.zip
           retention-days: 14
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name:   ${{ steps.tag.outputs.name }}
           name:       Switch Lite Rumble ${{ steps.tag.outputs.name }}
