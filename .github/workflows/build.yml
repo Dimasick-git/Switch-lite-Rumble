@@ -20,7 +20,7 @@ jobs:
     env:
       TITLE_ID: "0100000000ABE100"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build rumble-tap-sysmodule
         run: |
           export DEVKITPRO=/opt/devkitpro
@@ -33,7 +33,7 @@ jobs:
           cp "${NSP}" "${DEST}/exefs.nsp"
           : > "${DEST}/flags/boot2.flag"
       - name: Upload SD-ready package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rumble-tap-sysmodule-SD
           path: dist
@@ -45,7 +45,7 @@ jobs:
     env:
       TITLE_ID: "0100000000ABE101"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build fs-rail-keepalive
         run: |
           export DEVKITPRO=/opt/devkitpro
@@ -58,7 +58,7 @@ jobs:
           cp "${NSP}" "${DEST}/exefs.nsp"
           : > "${DEST}/flags/boot2.flag"
       - name: Upload SD-ready package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fs-rail-keepalive-SD
           path: dist
@@ -70,7 +70,7 @@ jobs:
     env:
       TITLE_ID: "0100000000ABE200"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Build rumble-logger-mitm
@@ -89,7 +89,7 @@ jobs:
           cp "${NSP}" "${DEST}/exefs.nsp"
           : > "${DEST}/flags/boot2.flag"
       - name: Upload SD-ready package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rumble-logger-mitm-SD
           path: dist
@@ -99,22 +99,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: [rumble-tap-libnx, fs-rail-keepalive, rumble-logger-mitm]
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: rumble-tap-sysmodule-SD
           path: bundle
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: fs-rail-keepalive-SD
           path: bundle
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: rumble-logger-mitm-SD
           path: bundle
       - name: Show bundle contents
         run: find bundle -type f | sort
       - name: Upload combined SD bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Switch-lite-Rumble-SD
           path: bundle
