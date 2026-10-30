@@ -1,7 +1,0 @@
-out/
-build/
-*.nso
-*.nsp
-*.npdm
-*.elf
-*.map
