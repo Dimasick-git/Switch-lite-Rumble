@@ -19,15 +19,15 @@ int main() {
     assert(rocker.Tick(true,false,2000)==0);
     assert(rocker.Tick(false,false,2001)==0);
     assert(rocker.Tick(true,false,2002)==1);
-    assert(VolumeRocker::Apply(0,-1)==0);
-    assert(VolumeRocker::Apply(1000,1)==1000);
-    assert(VolumeRocker::Apply(1000,-1)==871);
-    assert(VolumeRocker::Apply(25,-1)==4);
-    assert(VolumeRocker::Apply(975,1)==1000);
+    assert(VolumeRocker::Apply(0,-1,15)==0);
+    assert(VolumeRocker::Apply(1000,1,15)==1000);
+    assert(VolumeRocker::Apply(1000,-1,15)==871);
+    assert(VolumeRocker::Apply(25,-1,15)==4);
+    assert(VolumeRocker::Apply(975,1,15)==1000);
     unsigned level=1000;
-    for (unsigned i=0;i<20;++i) level=VolumeRocker::Apply(level,-1);
+    for (unsigned i=0;i<20;++i) level=VolumeRocker::Apply(level,-1,15);
     assert(level==0);
-    for (unsigned i=0;i<20;++i) level=VolumeRocker::Apply(level,1);
+    for (unsigned i=0;i<20;++i) level=VolumeRocker::Apply(level,1,15);
     assert(level==1000);
     // A connected but silent AM must not prevent physical volume changes.
     rocker.Reset(false,false);
@@ -37,7 +37,7 @@ int main() {
         const int direction=rocker.Tick(false,true,now);
         assert(direction==-1);
         if(!ryz::rumble::PhysicalVolumeOwns(2,now,now)) assert(false);
-        level=VolumeRocker::Apply(level,direction);
+        level=VolumeRocker::Apply(level,direction,15);
         assert(rocker.Tick(false,false,now+30)==0);
         // Delayed UI write for this press must not apply another step.
         assert(ryz::rumble::PhysicalVolumeOwns(0,now+20,now+119));
@@ -48,4 +48,20 @@ int main() {
     assert(ryz::rumble::PhysicalVolumeOwns(0,1000,1119));
     assert(!ryz::rumble::PhysicalVolumeOwns(0,1000,1120));
     assert(!ryz::rumble::PhysicalVolumeOwns(0,1000,1300));
+    // The rocker walks the same scale the native UI reads.
+    for (unsigned steps : {10u,15u,16u}) {
+        level=0;
+        for (unsigned i=1;i<=steps;++i) {
+            level=VolumeRocker::Apply(level,1,steps);
+            assert(level==ryz::rumble::VolumeStepGain(i,steps));
+            assert(ryz::rumble::VolumeGainStep(level,steps)==i);
+        }
+        assert(VolumeRocker::Apply(level,1,steps)==1000);
+    }
+    assert(VolumeRocker::Apply(500,1,0)==500);
+    assert(VolumeRocker::Apply(500,-1,101)==500);
+    // An echo seen before the worker sampled the press: the stale sample says
+    // "no button", the fresh one taken after picking up the echo says "held".
+    assert(!ryz::rumble::PhysicalVolumeOwns(0,1000,5000));
+    assert(ryz::rumble::PhysicalVolumeOwns(2,1000,5000));
 }

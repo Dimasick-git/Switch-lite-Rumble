@@ -22,9 +22,11 @@ public:
         if (now >= repeat_at) { repeat_at = now + 100; return key; }
         return 0;
     }
-    static unsigned Apply(unsigned gain, int direction) {
-        const int step=static_cast<int>(VolumeGainStep(gain,15));
-        return VolumeStepGain(static_cast<unsigned>(std::clamp(step+direction,0,15)),15);
+    // One rocker step on the same scale the native UI reads (target maximum).
+    static unsigned Apply(unsigned gain, int direction, unsigned steps) {
+        if (!steps || steps>100) return gain;
+        const int step=static_cast<int>(VolumeGainStep(gain,steps));
+        return VolumeStepGain(static_cast<unsigned>(std::clamp(step+direction,0,static_cast<int>(steps))),steps);
     }
 };
 }
