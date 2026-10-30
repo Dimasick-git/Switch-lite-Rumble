@@ -1,0 +1,56 @@
+name: build
+
+on:
+  push:
+    branches: [emulation]
+  pull_request:
+    branches: [emulation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Хост-тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: make test
+
+  module:
+    name: Модуль и тестовое приложение
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:20260219
+    steps:
+      - uses: actions/checkout@v7
+      - name: Atmosphere-RYZ
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init --depth 1 Atmosphere-RYZ
+      # Atmosphere-RYZ v8.1.0 ждёт libnx новее, чем в образе (pgl ShellEvent).
+      - name: libnx
+        shell: bash
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          git init -q /tmp/libnx && cd /tmp/libnx
+          git fetch -q --depth 1 https://github.com/switchbrew/libnx.git b156b4774fb2df7b93402169509266da7547fc4c
+          git checkout -q FETCH_HEAD
+          make -C nx -j"$(nproc)" && make -C nx install
+      - name: make dist
+        shell: bash
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          make -j"$(nproc)" dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ryz-lite-rumble-sd-${{ github.sha }}
+          path: sd/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

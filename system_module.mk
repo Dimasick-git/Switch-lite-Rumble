@@ -5,6 +5,8 @@ THIS_MAKEFILE := $(abspath $(lastword $(MAKEFILE_LIST)))
 CURRENT_DIRECTORY := $(abspath $(dir $(THIS_MAKEFILE)))
 include $(AMS_ROOT)/libraries/config/templates/stratosphere.mk
 
+# Имя модуля не зависит от имени папки клона.
+TARGET := ryz-lite-rumble-mitm
 ATMOSPHERE_SYSTEM_MODULE_TARGETS := nsp
 
 #---------------------------------------------------------------------------------

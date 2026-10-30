@@ -1,0 +1,7 @@
+[submodule "Ryzhand"]
+	path = Ryzhand
+	url = https://github.com/Dimasick-git/Ryazhahand-Overlay.git
+	branch = emulation
+[submodule "Atmosphere-RYZ"]
+	path = Atmosphere-RYZ
+	url = https://github.com/Dimasick-git/Atmosphere-RYZ.git
