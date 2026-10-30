@@ -1,0 +1,288 @@
+#include "runtime.hpp"
+#include <atomic>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+
+namespace ams::ryzrumble {
+namespace {
+constexpr const char* ConfigPath = "sdmc:/config/ryz-lite-rumble/config.ini";
+constexpr const char* LogPath = "sdmc:/config/ryz-lite-rumble/runtime.log";
+std::mutex state_mutex, log_mutex;
+ryz::rumble::State state;
+std::atomic<bool> lite{false}, enabled{true};
+std::atomic<unsigned> gain_percent{200}, watchdog_ms{1000};
+std::atomic<u64> commands{0}, last_program{0};
+std::atomic<u64> seen_commands{0}, seen_program{0};
+std::atomic<u32> seen_handle{0};
+std::atomic<u32> probe_count{0}, last_probe_result{0};
+std::atomic<u64> session_program{0};
+std::atomic<u64> client_queries{0}, client_accepted{0}, queried_program{0};
+std::atomic<u64> signal_program{0}, nonzero_updates{0}, zero_updates{0};
+std::atomic<u32> input_peak{0}, pcm_peak{0};
+std::atomic<u32> last_audio_error{0}, mitm_result{0xFFFFFFFFu};
+std::atomic<bool> audio_started{false}, thread_started{false};
+std::atomic<unsigned> active_clients{0};
+struct Client { u64 process = 0; unsigned references = 0; } clients[16];
+os::ThreadType audio_thread;
+alignas(os::MemoryPageSize) u8 audio_stack[0x8000];
+alignas(0x1000) s16 samples[2][2048];
+AudioOutBuffer buffers[2]{};
+constexpr unsigned Frames = 480;
+
+u64 Now() { return armTicksToNs(armGetSystemTick()) / 1'000'000ULL; }
+void RaisePeak(std::atomic<u32>& target, u32 value) {
+    u32 current = target.load();
+    while (current < value && !target.compare_exchange_weak(current, value)) {}
+}
+void MeasurePcm(const s16* pcm, size_t samples_count) {
+    u32 peak = 0;
+    for (size_t i=0;i<samples_count;++i) peak = std::max(peak, static_cast<u32>(std::abs(static_cast<int>(pcm[i]))));
+    RaisePeak(pcm_peak, peak);
+}
+bool ReadText(const char* path, char* text, size_t capacity) {
+    fs::FileHandle file;
+    if (R_FAILED(fs::OpenFile(&file, path, fs::OpenMode_Read))) return false;
+    size_t size = 0;
+    const Result rc = fs::ReadFile(&size, file, 0, text, capacity - 1);
+    fs::CloseFile(file);
+    if (R_FAILED(rc)) return false;
+    text[size] = 0;
+    return true;
+}
+unsigned Number(const char* text, const char* key, unsigned fallback) {
+    const size_t key_size = std::strlen(key);
+    for (const char* line = text; line && *line;) {
+        if (std::strncmp(line, key, key_size) == 0 && line[key_size] == '=') {
+            const char* value = line + key_size + 1;
+            if (std::strncmp(value, "true", 4) == 0) return 1;
+            if (std::strncmp(value, "false", 5) == 0) return 0;
+            unsigned out = 0;
+            if (std::sscanf(value, "%u", &out) == 1) return out;
+            return fallback;
+        }
+        const char* next = std::strchr(line, '\n'); line = next ? next + 1 : nullptr;
+    }
+    return fallback;
+}
+void ReloadConfig() {
+    char text[4096];
+    bool on = true;
+    bool volume_buttons = true;
+    if (ReadText(ConfigPath, text, sizeof(text))) {
+        on = Number(text, "enabled", 1) != 0;
+        volume_buttons = Number(text, "game_volume_buttons", 1) != 0;
+        gain_percent.store(std::min(Number(text, "gain_percent", 200), 400u));
+        const unsigned timeout = Number(text, "watchdog_ms", 1000);
+        watchdog_ms.store(timeout ? std::clamp(timeout, 100u, 10000u) : 0);
+    }
+    if (ReadText("sdmc:/config/ryazhahand/config.ini", text, sizeof(text)))
+        on = on && Number(text, "haptic_feedback", 1) != 0;
+    enabled.store(on);
+    SetVolumeButtonsEnabled(volume_buttons);
+    if (!on) { std::scoped_lock lock(state_mutex); state.Clear(); }
+}
+ryz::rumble::Levels Snapshot() {
+    if (!Enabled()) return {};
+    std::scoped_lock lock(state_mutex);
+    return state.Snapshot(Now(), watchdog_ms.load(), gain_percent.load() / 100.f);
+}
+
+void ReportCommands(u64 now) {
+    static u64 previous_queries = 0, client_reported = 0;
+    const u64 queries = client_queries.load();
+    if (queries != previous_queries && now - client_reported >= 1000) {
+        char text[144];
+        std::snprintf(text, sizeof(text), "client queries=%llu accepted=%llu last=%016llX",
+            static_cast<unsigned long long>(queries), static_cast<unsigned long long>(client_accepted.load()),
+            static_cast<unsigned long long>(queried_program.load()));
+        Log(text); previous_queries = queries; client_reported = now;
+    }
+    // AudioMain and PlayAudio execute on the same audio thread.
+    static u64 reported = 0, previous_count = 0, previous_seen = 0;
+    const u64 count = commands.load();
+    const u64 seen = seen_commands.load();
+    if ((count != previous_count || seen != previous_seen) && now - reported >= 1000) {
+        char text[192];
+        std::snprintf(text, sizeof(text), "seen=%llu accepted=%llu game=%016llX handle=%08X on=%u nz=%llu zero=%llu amp=%u/1000 pcm=%u",
+            static_cast<unsigned long long>(seen), static_cast<unsigned long long>(count),
+            static_cast<unsigned long long>(seen_program.load()), seen_handle.load(), Enabled() ? 1u : 0u,
+            static_cast<unsigned long long>(nonzero_updates.load()), static_cast<unsigned long long>(zero_updates.load()),
+            input_peak.load(), pcm_peak.load());
+        Log(text); previous_count = count; previous_seen = seen; reported = now;
+    }
+}
+
+::Result OpenAudio() {
+    const ::Result rc = audoutInitialize();
+    if (R_FAILED(rc)) return rc;
+    if (audoutGetSampleRate() != 48000 || audoutGetChannelCount() != 2 || audoutGetPcmFormat() != PcmFormat_Int16) {
+        audoutExit();
+        return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    }
+    // RyazhTune adjusts the foreground game's process volume. This output
+    // belongs to our sysmodule PID and retains its own unity gain.
+    const ::Result volume_rc = audoutSetAudioOutVolume(1.f);
+    if (R_FAILED(volume_rc)) { audoutExit(); return volume_rc; }
+    return 0;
+}
+::Result PlayAudio() {
+    const ::Result opened = OpenAudio();
+    if (R_FAILED(opened)) return opened;
+    auto cleanup = SCOPE_GUARD { audio_started.store(false); audoutStopAudioOut(); audoutExit(); };
+    ryz::rumble::Synth synth;
+    for (unsigned i = 0; i < 2; ++i) {
+        buffers[i] = {};
+        buffers[i].buffer = samples[i];
+        buffers[i].buffer_size = sizeof(samples[i]);
+        buffers[i].data_size = Frames * 2 * sizeof(s16);
+        synth.Render(samples[i], Frames, Snapshot(), 1000);
+        MeasurePcm(samples[i], Frames * 2);
+        const ::Result rc = audoutAppendAudioOutBuffer(&buffers[i]);
+        if (R_FAILED(rc)) return rc;
+    }
+    ::Result rc = audoutStartAudioOut();
+    if (R_FAILED(rc)) return rc;
+    audio_started.store(true);
+    Log("audio started: fixed 225 Hz, strength 1000, antiphase");
+    u64 idle_since = 0, checked = Now();
+    while (true) {
+        const u64 now = Now();
+        if (now - checked >= 1000) { ReloadConfig(); checked = now; }
+        ReportCommands(now);
+        const auto levels = Snapshot();
+        if (levels.left == 0 && levels.right == 0 && (!Enabled() || active_clients.load() == 0)) {
+            if (!idle_since) idle_since = now;
+            if (now - idle_since >= 500) return 0;
+        } else { idle_since = 0; }
+        AudioOutBuffer* buffer = nullptr; u32 released = 0;
+        rc = audoutWaitPlayFinish(&buffer, &released, 50'000'000ULL);
+        if (R_VALUE(rc) == KERNELRESULT(TimedOut)) continue;
+        if (R_FAILED(rc)) return rc;
+        if (!released) continue;
+        if (buffer != &buffers[0] && buffer != &buffers[1])
+            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        synth.Render(static_cast<s16*>(buffer->buffer), Frames, Snapshot(), 1000);
+        MeasurePcm(static_cast<const s16*>(buffer->buffer), Frames * 2);
+        rc = audoutAppendAudioOutBuffer(buffer);
+        if (R_FAILED(rc)) return rc;
+    }
+}
+void AudioMain(void*) {
+    Log("audio thread entered");
+    u64 checked = 0;
+    while (true) {
+        const u64 now = Now();
+        if (now - checked >= 1000) { ReloadConfig(); checked = now; }
+        ReportCommands(now);
+        const auto levels = Snapshot();
+        // Prime at game HID connection time, before its first vibration. A
+        // cold audio open can otherwise swallow short on/stop command pairs.
+        if ((Enabled() && active_clients.load() > 0) || levels.left > 0 || levels.right > 0) {
+            const ::Result rc = PlayAudio();
+            last_audio_error.store(rc);
+            if (R_FAILED(rc)) { Log("audio error", rc); os::SleepThread(TimeSpan::FromSeconds(1)); }
+        } else { os::SleepThread(TimeSpan::FromMilliSeconds(10)); }
+    }
+}
+}
+
+void Log(const char* message, u32 result) {
+    std::scoped_lock lock(log_mutex);
+    char line[192];
+    const int length = std::snprintf(line, sizeof(line), "%llu %s: %08X\n",
+        static_cast<unsigned long long>(Now()), message, result);
+    AMS_UNUSED(fs::CreateFile(LogPath, 0));
+    fs::FileHandle file;
+    if (R_FAILED(fs::OpenFile(&file, LogPath, fs::OpenMode_Write | fs::OpenMode_AllowAppend))) return;
+    s64 size = 0;
+    if (R_SUCCEEDED(fs::GetFileSize(&size, file))) {
+        if (size > 65536) { AMS_UNUSED(fs::SetFileSize(file, 0)); size = 0; }
+        AMS_UNUSED(fs::WriteFile(file, size, line, std::min(static_cast<size_t>(length), sizeof(line) - 1), fs::WriteOption::Flush));
+    }
+    fs::CloseFile(file);
+}
+bool Enabled() { return lite.load() && enabled.load(); }
+bool IsLite() { return lite.load(); }
+void ObserveCommand(u64 program, u32 handle) {
+    seen_program.store(program); seen_handle.store(handle); seen_commands.fetch_add(1);
+}
+void ObserveProbe(u32 result) { last_probe_result.store(result); probe_count.fetch_add(1); }
+void ObserveClient(u64 program, bool accepted) {
+    queried_program.store(program); client_queries.fetch_add(1);
+    if (accepted) client_accepted.fetch_add(1);
+}
+ryz::rumble::ClientStatus GetClientStatus() {
+    return {client_queries.load(), client_accepted.load(), queried_program.load(), session_program.load()};
+}
+ryz::rumble::SignalStatus GetSignalStatus() {
+    return {signal_program.load(), nonzero_updates.load(), zero_updates.load(), input_peak.load(), pcm_peak.load()};
+}
+void SetMitmResult(u32 result) { mitm_result.store(result); }
+ryz::rumble::DebugStatus GetDebugStatus() {
+    return {seen_commands.load(), commands.load(), seen_program.load(), session_program.load(),
+        seen_handle.load(), (IsLite() ? 1u : 0u) | (Enabled() ? 2u : 0u) |
+        (audio_started.load() ? 4u : 0u) | (thread_started.load() ? 8u : 0u),
+        last_audio_error.load(), mitm_result.load(), active_clients.load(), 17, {probe_count.load(),last_probe_result.load()}};
+}
+void Initialize() {
+    AMS_UNUSED(fs::CreateDirectory("sdmc:/config"));
+    AMS_UNUSED(fs::CreateDirectory("sdmc:/config/ryz-lite-rumble"));
+    SetSysProductModel model = SetSysProductModel_Invalid;
+    const ::Result rc = setsysGetProductModel(&model);
+    setsysExit();
+    lite.store(R_SUCCEEDED(rc) && model == SetSysProductModel_Hoag);
+    Log("module starting", rc);
+    Log("product model", static_cast<u32>(model));
+    Log("loading configuration");
+    ReloadConfig();
+    Log("configuration loaded");
+}
+void StartAudio() {
+    constexpr s32 priority = os::DefaultThreadPriority;
+    static_assert(priority >= os::HighestThreadPriority && priority <= os::LowestThreadPriority,
+        "Stratosphere uses user thread priorities, not Horizon kernel priorities");
+    Log("create audio thread begin, user priority", static_cast<u32>(priority));
+    const Result rc = os::CreateThread(&audio_thread, AudioMain, nullptr, audio_stack, sizeof(audio_stack), priority, 3);
+    Log("create audio thread", rc.GetValue());
+    if (R_SUCCEEDED(rc)) { os::SetThreadNamePointer(&audio_thread, "RyzRumbleAudio"); os::StartThread(&audio_thread); thread_started.store(true); }
+    else { enabled.store(false); }
+}
+void SessionOpened(u64 process, u64 program) {
+    session_program.store(program);
+    std::scoped_lock lock(state_mutex);
+    for (auto& client : clients) if (client.process == process && client.references) {
+        ++client.references; active_clients.fetch_add(1); return;
+    }
+    for (auto& client : clients) if (!client.references) {
+        client = {process, 1}; active_clients.fetch_add(1); return;
+    }
+}
+void SessionClosed(u64 process) {
+    std::scoped_lock lock(state_mutex);
+    for (auto& client : clients) if (client.process == process && client.references) {
+        active_clients.fetch_sub(1);
+        if (--client.references == 0) { state.StopOwner(process); client.process = 0; }
+        return;
+    }
+}
+bool Publish(u64 process, u64 program, const u32* handles, const ryz::rumble::Value* values, size_t count) {
+    std::scoped_lock lock(state_mutex);
+    if (!state.Apply(process, handles, values, count, Now())) return false;
+    if (signal_program.load() != program) {
+        signal_program.store(program); nonzero_updates.store(0); zero_updates.store(0);
+        input_peak.store(0); pcm_peak.store(0);
+    }
+    for (size_t i=0;i<count;++i) if (ryz::rumble::IsRenderable(handles[i])) {
+        const float amplitude = std::max(values[i].amp_low, values[i].amp_high);
+        if (amplitude > 0) nonzero_updates.fetch_add(1); else zero_updates.fetch_add(1);
+        RaisePeak(input_peak, static_cast<u32>(std::lround(amplitude * 1000.f)));
+    }
+    last_program.store(program); commands.fetch_add(1);
+    return true;
+}
+ryz::rumble::Value Actual(u64 process, u32 handle) {
+    std::scoped_lock lock(state_mutex);
+    return state.Actual(process, handle);
+}
+}

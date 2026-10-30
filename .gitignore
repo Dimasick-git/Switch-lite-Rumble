@@ -1,0 +1,14 @@
+out/
+build/
+sd/
+tests/bin/
+test-app/build/
+*.elf
+*.nro
+*.nacp
+*.nsp
+*.nso
+*.npdm
+*.map
+*.zip
+*.log
