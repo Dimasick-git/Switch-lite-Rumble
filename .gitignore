@@ -1,6 +1,8 @@
 out/
 build/
 sd/
+dist/
+__pycache__/
 tests/bin/
 test-app/build/
 *.elf

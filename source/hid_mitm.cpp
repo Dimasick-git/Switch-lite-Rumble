@@ -1,5 +1,6 @@
 #include "hid_mitm.hpp"
 #include "audctl_mitm.hpp"
+#include "notification_mitm.hpp"
 #include <cstdio>
 #include <cstring>
 
@@ -130,12 +131,12 @@ Result Hid::SendValues(u64 aruid, const sf::InPointerArray<u32>& handles, const 
 namespace {
 struct Options {
     static constexpr size_t PointerBufferSize = 0x1000;
-    static constexpr size_t MaxDomains = 4;
-    static constexpr size_t MaxDomainObjects = 96;
+    static constexpr size_t MaxDomains = 8;
+    static constexpr size_t MaxDomainObjects = 128;
     static constexpr bool CanDeferInvokeRequest = false;
     static constexpr bool CanManageMitmServers = true;
 };
-class Manager final : public sf::hipc::ServerManager<3, Options, 24> {
+class Manager final : public sf::hipc::ServerManager<4, Options, 32> {
     Result OnNeedsToAccept(int port, Server* server) override {
         if (port == 1) R_RETURN(AcceptImpl(server,
             sf::CreateSharedObjectEmplaced<ipc::IStatus, StatusService>()));
@@ -143,10 +144,12 @@ class Manager final : public sf::hipc::ServerManager<3, Options, 24> {
         sm::MitmProcessInfo client;
         server->AcknowledgeMitmSession(&forward, &client);
         char text[112];
-        std::snprintf(text, sizeof(text), "%s session game=%016llX pid=%llu", port==2?"audctl":"HID",
+        std::snprintf(text, sizeof(text), "%s session game=%016llX pid=%llu", port==3?"ovln:rcv":port==2?"audctl":"HID",
             static_cast<unsigned long long>(client.program_id.value),
             static_cast<unsigned long long>(client.process_id.value));
         Log(text);
+        if(port==3) R_RETURN(AcceptMitmImpl(server,
+            sf::CreateSharedObjectEmplaced<ipc::INotificationService, Notifications>(decltype(forward)(forward),client),forward));
         if(port==2) R_RETURN(AcceptMitmImpl(server,
             sf::CreateSharedObjectEmplaced<ipc::IAudctl, Audctl>(decltype(forward)(forward),client),forward));
         R_RETURN(AcceptMitmImpl(server,
@@ -178,10 +181,13 @@ void RunServer() {
     const Result ui_rc=manager.RegisterMitmServer<Audctl>(2,sm::ServiceName::Encode("audctl"));
     SetVolumeUiResult(ui_rc.GetValue());Log("audctl MITM registration",ui_rc.GetValue());
     if(R_FAILED(ui_rc)) AMS_UNUSED(sm::mitm::ClearFutureMitm(sm::ServiceName::Encode("audctl")));
+    const Result notification_rc=manager.RegisterMitmServer<Notifications>(3,sm::ServiceName::Encode("ovln:rcv"));
+    Log("volume notification MITM registration",notification_rc.GetValue());
+    if(R_FAILED(notification_rc)) AMS_UNUSED(sm::mitm::ClearFutureMitm(sm::ServiceName::Encode("ovln:rcv")));
     const Result rc = manager.RegisterMitmServer<Hid>(0, sm::ServiceName::Encode("hid"));
     SetMitmResult(rc.GetValue());
     Log("HID MITM registration", rc.GetValue());
-    if (R_FAILED(rc) && R_FAILED(status_rc) && R_FAILED(ui_rc)) return;
+    if (R_FAILED(rc) && R_FAILED(status_rc) && R_FAILED(ui_rc) && R_FAILED(notification_rc)) return;
     // Install audctl before any worker requests it: never wait on our own
     // future-MITM declaration through a shared SM session.
     StartVolumeButtons();

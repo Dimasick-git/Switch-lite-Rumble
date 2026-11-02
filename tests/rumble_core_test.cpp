@@ -14,7 +14,7 @@ int main() {
     assert(ShouldHookClient(0x010000000000100DULL, false, true)); // Album HBL host
     assert(ShouldHookClient(0x0100000000001000ULL, false, true)); // UI applet range
     assert(ShouldHookClient(0x0100266019B8C000ULL, false, true)); // observed game
-    assert(ShouldHookClient(0x03DB12780BD84000ULL, false, true)); // forwarder host
+    assert(ShouldHookClient(0x03DB12780BD84000ULL, false, true)); // rejected host in alpha8 log
     assert(!ShouldHookClient(0x03DB12780BD84000ULL, false, false));
     assert(ShouldHookClient(0x3FFFFFFFFFFFFFFFULL, false, true));
     assert(!ShouldHookClient(0x4000000000000000ULL, false, true));

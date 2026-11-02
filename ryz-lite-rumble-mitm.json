@@ -15,7 +15,10 @@
     "permissions": "0xFFFFFFFFFFFFFFFF"
   },
   "service_host": [
-    "hid", "ryz:rum", "audctl"
+    "hid",
+    "ryz:rum",
+    "audctl",
+    "ovln:rcv"
   ],
   "service_access": [
     "*"

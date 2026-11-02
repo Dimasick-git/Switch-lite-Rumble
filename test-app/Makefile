@@ -40,7 +40,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 TARGET		:=	ryz-rumble-test
 APP_TITLE := Ryz rumble test
 APP_AUTHOR := Ryzhand
-APP_VERSION := 0.13.0
+APP_VERSION := 0.19.0
 API_VERSION	?=	8
 BUILD		:=	build
 SOURCES := source

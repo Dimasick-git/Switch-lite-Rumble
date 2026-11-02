@@ -44,7 +44,7 @@ dist: all test-app
 	if [ -d "$(RYZHAND)/out" ]; then cp -r "$(RYZHAND)/out/." $(SD_DIR)/; fi
 	cp $(OUT_DIR)/ryz-lite-rumble-mitm.nsp $(SD_DIR)/atmosphere/contents/$(TID)/exefs.nsp
 	touch $(SD_DIR)/atmosphere/contents/$(TID)/flags/boot2.flag
-	printf 'audctl\n' > $(SD_DIR)/atmosphere/contents/$(TID)/mitm.lst
+	printf 'audctl\novln:rcv\n' > $(SD_DIR)/atmosphere/contents/$(TID)/mitm.lst
 	printf '{\n  "name": "Ryz Lite Rumble MITM",\n  "tid": "$(TID)",\n  "requires_reboot": true\n}\n' > $(SD_DIR)/atmosphere/contents/$(TID)/toolbox.json
 	cp config/config.ini $(SD_DIR)/config/ryz-lite-rumble/config.ini
 	cp test-app/ryz-rumble-test.nro $(SD_DIR)/switch/ryz-rumble-test/

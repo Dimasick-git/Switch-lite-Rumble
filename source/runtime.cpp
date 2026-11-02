@@ -1,4 +1,5 @@
 #include "runtime.hpp"
+#include "config_value.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -50,35 +51,21 @@ bool ReadText(const char* path, char* text, size_t capacity) {
     text[size] = 0;
     return true;
 }
-unsigned Number(const char* text, const char* key, unsigned fallback) {
-    const size_t key_size = std::strlen(key);
-    for (const char* line = text; line && *line;) {
-        if (std::strncmp(line, key, key_size) == 0 && line[key_size] == '=') {
-            const char* value = line + key_size + 1;
-            if (std::strncmp(value, "true", 4) == 0) return 1;
-            if (std::strncmp(value, "false", 5) == 0) return 0;
-            unsigned out = 0;
-            if (std::sscanf(value, "%u", &out) == 1) return out;
-            return fallback;
-        }
-        const char* next = std::strchr(line, '\n'); line = next ? next + 1 : nullptr;
-    }
-    return fallback;
-}
 void ReloadConfig() {
     char text[4096];
     bool on = true;
     bool volume_buttons = true;
     if (ReadText(ConfigPath, text, sizeof(text))) {
-        on = Number(text, "enabled", 1) != 0;
-        volume_buttons = Number(text, "game_volume_buttons", 1) != 0;
-        gain_percent.store(std::min(Number(text, "gain_percent", 200), 400u));
-        const unsigned timeout = Number(text, "watchdog_ms", 1000);
+        on = ryz::rumble::ConfigNumber(text, "rumble", "enabled", 1) != 0;
+        volume_buttons = ryz::rumble::ConfigNumber(text, "rumble", "game_volume_buttons", 1) != 0;
+        gain_percent.store(std::min(ryz::rumble::ConfigNumber(text, "rumble", "gain_percent", 200), 400u));
+        const unsigned timeout = ryz::rumble::ConfigNumber(text, "rumble", "watchdog_ms", 1000);
         watchdog_ms.store(timeout ? std::clamp(timeout, 100u, 10000u) : 0);
     }
     if (ReadText("sdmc:/config/ryazhahand/config.ini", text, sizeof(text)))
-        on = on && Number(text, "haptic_feedback", 1) != 0;
-    enabled.store(on);
+        on = on && ryz::rumble::ConfigNumber(text, "ryazhahand", "haptic_feedback", 1) != 0;
+    const bool before=enabled.exchange(on);
+    if(before!=on) Log(on?"haptics enabled; game volume mode allowed":"haptics disabled; restoring ordinary volume");
     SetVolumeButtonsEnabled(volume_buttons);
     if (!on) { std::scoped_lock lock(state_mutex); state.Clear(); }
 }
@@ -223,7 +210,7 @@ ryz::rumble::DebugStatus GetDebugStatus() {
     return {seen_commands.load(), commands.load(), seen_program.load(), session_program.load(),
         seen_handle.load(), (IsLite() ? 1u : 0u) | (Enabled() ? 2u : 0u) |
         (audio_started.load() ? 4u : 0u) | (thread_started.load() ? 8u : 0u),
-        last_audio_error.load(), mitm_result.load(), active_clients.load(), 17, {probe_count.load(),last_probe_result.load()}};
+        last_audio_error.load(), mitm_result.load(), active_clients.load(), 19, {probe_count.load(),last_probe_result.load()}};
 }
 void Initialize() {
     AMS_UNUSED(fs::CreateDirectory("sdmc:/config"));

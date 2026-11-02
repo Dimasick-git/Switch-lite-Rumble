@@ -12,6 +12,30 @@ AMS_SF_DEFINE_MITM_INTERFACE(ams::ryzrumble::ipc, IAudctlSession, RYZ_AUDCTL_VOL
  AMS_SF_METHOD_INFO(C,H,5000,Result,CreateController,(sf::OutMoveHandle out),(out))
 AMS_SF_DEFINE_MITM_INTERFACE(ams::ryzrumble::ipc, IAudctl, RYZ_AUDCTL_METHODS, 0x52594143)
 
+// Observe every child request without guessing its ABI or touching its TLS
+// message. The stock dispatch table still validates and forwards the request.
+namespace ams::sf::cmif {
+template<> struct ServiceDispatchTraits<ams::ryzrumble::ipc::IAudctlSession> {
+    static constexpr auto BaseTable=ams::ryzrumble::ipc::IAudctlSession::s_CmifServiceDispatchTable<ams::ryzrumble::ipc::IAudctlSession>;
+    class Table : public impl::ServiceDispatchTableBase {
+    public:
+        Result ProcessMessageForMitm(ServiceDispatchContext& ctx,const PointerAndSize& raw) const {
+            if(raw.GetSize()>=sizeof(CmifInHeader)) {
+                const auto* header=static_cast<const CmifInHeader*>(raw.GetPointer());
+                if(header->magic==CMIF_IN_HEADER_MAGIC) {
+                    const size_t words=(raw.GetSize()-sizeof(CmifInHeader))/sizeof(u32);
+                    const auto* data=reinterpret_cast<const u32*>(header+1);
+                    ams::ryzrumble::ObserveAudctlWire(header->command_id,words,words?data[0]:0,words>1?data[1]:0);
+                }
+            }
+            R_RETURN(BaseTable.ProcessMessageForMitm(ctx,raw));
+        }
+    };
+    static constexpr Table DispatchTable{};
+    static constexpr ServiceDispatchMeta Meta{&DispatchTable,&impl::ServiceDispatchTableBase::ProcessMessageForMitm<Table>};
+};
+}
+
 namespace ams::ryzrumble {
 Result RegisterAudctlChild(sf::OutMoveHandle out,std::shared_ptr<::Service> child,const sm::MitmProcessInfo& client);
 class Audctl : public sf::MitmServiceImplBase {

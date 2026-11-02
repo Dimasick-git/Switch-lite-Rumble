@@ -3,6 +3,7 @@
 #include "volume_rocker.hpp"
 #include "volume_checkpoint.hpp"
 #include "volume_ui_scale.hpp"
+#include "volume_restore.hpp"
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -22,6 +23,12 @@ std::atomic<u32> raw_button_keys{0};
 std::atomic<u64> last_button_held{0},ui_button_echoes{0};
 std::atomic<u32> ui_command{0},ui_target{0};
 std::atomic<s32> ui_value{0};
+std::atomic<u64> hud_received{0},hud_patched{0};
+struct WireCall {
+    std::atomic<u32> command{UINT32_MAX},words{0},first{0},second{0};
+    std::atomic<u64> count{0};
+    u64 reported=0;
+} wire_calls[32];
 os::ThreadType worker;
 alignas(os::MemoryPageSize) u8 stack[0x8000];
 u64 Now() { return armTicksToNs(armGetSystemTick()) / 1'000'000ULL; }
@@ -50,7 +57,7 @@ bool SaveCheckpoint(const SystemLevel& value) {
     char text[128];
     return ryz::rumble::EncodeVolumeCheckpoint(text,sizeof(text),value) && Write(Checkpoint,text);
 }
-::Result Restore(const SystemLevel& value) {
+::Result Restore(const SystemLevel& value,bool clear_checkpoint=true) {
     // Restore the pre-mode speaker state, including mute. Do not change the
     // headphone target or force the active audio device to speakers.
     ::Result rc=audctlSetTargetVolume(AudioTarget_Speaker,value.speaker);
@@ -58,7 +65,7 @@ bool SaveCheckpoint(const SystemLevel& value) {
     const ::Result mute_rc=audctlSetTargetMute(AudioTarget_Speaker,value.mute);
     if (R_SUCCEEDED(rc)) rc=master_rc;
     if (R_SUCCEEDED(rc)) rc=mute_rc;
-    if (R_SUCCEEDED(rc)) AMS_UNUSED(fs::DeleteFile(Checkpoint));
+    if (R_SUCCEEDED(rc) && clear_checkpoint) AMS_UNUSED(fs::DeleteFile(Checkpoint));
     return rc;
 }
 ::Result App(u64& pid,u64& program) {
@@ -130,41 +137,28 @@ void Main(void*) {
         if (R_SUCCEEDED(rc)) rc=OpenPad(down,0x35000003,GpioPadName_ButtonVolDown);
         if (R_FAILED(rc)) { Fail(rc,"volume buttons: open pads"); os::SleepThread(TimeSpan::FromSeconds(2)); continue; }
         flags.store(3); Log("volume buttons: GPIO ready");
-        Tune tune; SystemLevel saved; float game_gain=1;
-        // While the same game keeps running (headphones, mode switched off,
-        // error) give it back its own Tune gain. Otherwise it stays attenuated
-        // by the speaker level folded into Tune on activation.
-        const auto leave=[&](bool same_game) {
-            const ::Result restore_rc=Restore(saved);
-            if (same_game && serviceIsActive(&tune.service)) AMS_UNUSED(tune.Set(game_gain));
-            return restore_rc;
-        };
+        Tune tune; SystemLevel saved;float original_tune=1;
         bool active=false,dirty=false;
         u64 pid=0,program=0,candidate=0,stable_since=0,last_app=0,last_context=0,last_external=0,last_change=0,armed_at=0;
         u32 raw_keys=0,stable_keys=0; u64 raw_since=0;
         AudioTarget output=AudioTarget_Invalid;
-        u64 traced_pid=0,last_ui_log=0,logged_calls=0;
+        u64 traced_pid=0,last_ui_log=0,logged_calls=0,last_wire_log=0,last_state_log=0;
         ryz::rumble::VolumeRocker rocker;
         for (;;) {
             const u64 now=Now();
-            if (now-last_ui_log>=1000 && ui_calls.load()!=logged_calls) {
-                logged_calls=ui_calls.load();last_ui_log=now;
-                char report[240];
-                util::SNPrintf(report,sizeof(report),"volume UI: calls=%llu served=%llu child=%llu clients=%u am=%u reads=%llu writes=%llu step=%u last=%u target=%u value=%d echoes=%llu",
-                    static_cast<unsigned long long>(logged_calls),static_cast<unsigned long long>(ui_served.load()),
-                    static_cast<unsigned long long>(ui_children.load()),ui_clients.load(),am_clients.load(),
-                    static_cast<unsigned long long>(ui_reads.load()),static_cast<unsigned long long>(ui_writes.load()),
-                    ryz::rumble::VolumeGainStep(level.load(),target_level.load()),ui_command.load(),ui_target.load(),ui_value.load(),
-                    static_cast<unsigned long long>(ui_button_echoes.load()));
-                Log(report);
+            ::GpioValue up_value=GpioValue_High,down_value=GpioValue_High;
+            rc=gpioPadGetValue(&up,&up_value);
+            if (R_SUCCEEDED(rc)) rc=gpioPadGetValue(&down,&down_value);
+            if (R_FAILED(rc)) {
+                Fail(rc,"volume buttons: read GPIO");
+                if(active) {Restore(saved);tune.Set(original_tune);}
+                break;
             }
-            u32 reading=0;
-            rc=ReadKeys(up,down,reading);
-            if (R_FAILED(rc)) { Fail(rc,"volume buttons: read GPIO"); if (active) leave(true); break; }
+            const u32 reading=(up_value==GpioValue_Low?1u:0u)|(down_value==GpioValue_Low?2u:0u);
             raw_button_keys.store(reading);
             if (reading) last_button_held.store(now);
             if (reading!=raw_keys) { raw_keys=reading; raw_since=now; }
-            if (now-raw_since>=15) stable_keys=raw_keys;
+            if (now-raw_since>=8) stable_keys=raw_keys;
             keys.store(stable_keys);
             if (now-last_app>=200) {
                 const ::Result app_rc=App(pid,program);
@@ -179,9 +173,20 @@ void Main(void*) {
             const bool usable=requested.load() && Enabled() && pid!=0 && output==AudioTarget_Speaker;
             if (active && (!usable || active_pid.load()!=pid)) {
                 ui_request.store(NoUiRequest);
-                rc=leave(active_pid.load()==pid); active=false; active_pid.store(0); active_program.store(0);
+                // While the same game remains open, release the process gain
+                // we own as well as the physical pin. Otherwise native volume
+                // keeps multiplying an abandoned per-game attenuation.
+                const bool same_game=pid!=0 && active_pid.load()==pid;
+                const auto ordinary=same_game?ryz::rumble::OrdinaryVolume(saved,wanted,original_tune,maximum):saved;
+                rc=Restore(ordinary,false);
+                if(same_game) {
+                    const ::Result gain_rc=tune.Set(original_tune);
+                    if(R_SUCCEEDED(rc))rc=gain_rc;
+                }
+                active=false; active_pid.store(0); active_program.store(0);
                 if (R_FAILED(rc)) { Fail(rc,"volume buttons: restore failed"); break; }
-                Log("volume buttons: ordinary volume restored");
+                AMS_UNUSED(fs::DeleteFile(Checkpoint));
+                Log(same_game?"volume buttons: ordinary volume and original Tune gain restored":"volume buttons: old application volume pin released");
             }
             if (!active && !usable) tune.Close();
             if (!active && usable && now-stable_since>=500) {
@@ -194,13 +199,14 @@ void Main(void*) {
                 if (R_SUCCEEDED(rc)) rc=tune.Get(initial);
                 if (trace_entry) Log("volume arm: Tune gain read",rc);
                 if (R_FAILED(rc)) { error.store(rc); tune.Close(); os::SleepThread(TimeSpan::FromMilliSeconds(200)); continue; }
+                original_tune=initial;
                 rc=audctlGetTargetVolume(&saved.speaker,AudioTarget_Speaker);
                 if (R_SUCCEEDED(rc)) rc=audctlGetSystemOutputMasterVolume(&saved.master);
                 if (R_SUCCEEDED(rc)) rc=audctlIsTargetMute(&saved.mute,AudioTarget_Speaker);
                 if (R_FAILED(rc) || !std::isfinite(saved.master) || saved.master<0 || saved.master>3) {
                     error.store(R_FAILED(rc)?rc:MAKERESULT(Module_Libnx,LibnxError_BadInput)); os::SleepThread(TimeSpan::FromMilliSeconds(200)); continue;
                 }
-                if (!have_level) wanted=static_cast<unsigned>(std::lround(std::clamp(initial*saved.master*saved.speaker/maximum,0.f,1.f)*1000));
+                if (!have_level) wanted=static_cast<unsigned>(std::lround(std::clamp(initial*saved.master*ryz::rumble::VolumeStepGain(saved.speaker,maximum)/1000.f,0.f,1.f)*1000));
                 if (saved.mute && !have_level) wanted=0;
                 if (trace_entry) Log("volume arm: saving allocation-free checkpoint");
                 if (!SaveCheckpoint(saved)) { Fail(MAKERESULT(Module_Libnx,LibnxError_IoError),"volume buttons: cannot save recovery state"); os::SleepThread(TimeSpan::FromSeconds(1)); continue; }
@@ -216,7 +222,7 @@ void Main(void*) {
                 if (R_SUCCEEDED(rc)) rc=audctlSetTargetMute(AudioTarget_Speaker,false);
                 if (R_SUCCEEDED(rc)) rc=tune.Set(wanted/1000.f);
                 if (R_FAILED(rc)) { Restore(saved); tune.Set(initial); Fail(rc,"volume buttons: activation failed"); tune.Close(); os::SleepThread(TimeSpan::FromSeconds(1)); continue; }
-                active=true; have_level=true; dirty=true; last_change=now; armed_at=now; game_gain=initial;
+                active=true; have_level=true; dirty=true; last_change=now; armed_at=now;
                 active_pid.store(pid); active_program.store(program); level.store(wanted);
                 if (wanted) last_nonzero.store(wanted);
                 rocker.Reset((stable_keys&1)!=0,(stable_keys&2)!=0); error.store(0);
@@ -228,10 +234,7 @@ void Main(void*) {
                 const u32 ui=ui_request.exchange(NoUiRequest);
                 u32 held=reading;
                 if (ui!=NoUiRequest && !held && R_SUCCEEDED(ReadKeys(up,down,held)) && held) {
-                    // The echo can land after the GPIO sample above but before
-                    // this exchange. A press always precedes its echo, so a
-                    // fresh sample tells them apart; without it the echo was
-                    // applied and the rocker then added a second step.
+                    // The UI echo can arrive after the first GPIO sample.
                     raw_button_keys.store(held); last_button_held.store(now);
                 }
                 const bool physical=ryz::rumble::PhysicalVolumeOwns(held,last_button_held.load(),now);
@@ -241,7 +244,7 @@ void Main(void*) {
                 }
                 if (ui!=NoUiRequest && !physical) {
                     rc=tune.Set(ui/1000.f);
-                    if (R_FAILED(rc)) { leave(true); Fail(rc,"volume UI: Tune write failed"); tune.Close(); break; }
+                    if (R_FAILED(rc)) { Restore(saved);tune.Set(original_tune); Fail(rc,"volume UI: Tune write failed"); tune.Close(); break; }
                     wanted=ui; changes.fetch_add(1);dirty=true;last_change=now;
                 }
                 // An AM session does not prove that it sends volume commands.
@@ -250,7 +253,7 @@ void Main(void*) {
                 if (direction) {
                     const unsigned next=ryz::rumble::VolumeRocker::Apply(wanted,direction,static_cast<unsigned>(maximum));
                     rc=tune.Set(next/1000.f);
-                    if (R_FAILED(rc)) { leave(true); Fail(rc,"volume buttons: Tune write failed"); tune.Close(); break; }
+                    if (R_FAILED(rc)) { Restore(saved);tune.Set(original_tune); Fail(rc,"volume buttons: Tune write failed"); tune.Close(); break; }
                     wanted=next; level.store(wanted); changes.fetch_add(1); dirty=true; last_change=now;
                     if (wanted) last_nonzero.store(wanted);
                 }
@@ -270,9 +273,7 @@ void Main(void*) {
                     if (R_SUCCEEDED(rc)) rc=tune.Get(external);
                     if (R_SUCCEEDED(rc) && ui_request.load()==NoUiRequest && std::fabs(external-wanted/1000.f)>.005f) {
                         if (now-armed_at<2000) {
-                            // Tune resets the title gain when it notices a new
-                            // title. Landing after activation, that reset is not
-                            // a user change: keep the game level, not full volume.
+                            // Tune can reset its title gain just after launch.
                             rc=tune.Set(wanted/1000.f);
                         } else {
                             wanted=static_cast<unsigned>(std::lround(std::clamp(external,0.f,1.f)*1000));
@@ -282,7 +283,36 @@ void Main(void*) {
                     }
                     last_external=now;
                 }
-                if (R_FAILED(rc)) { leave(true); Fail(rc,"volume buttons: control error"); tune.Close(); break; }
+                if (R_FAILED(rc)) { Restore(saved);tune.Set(original_tune); Fail(rc,"volume buttons: control error"); tune.Close(); break; }
+            }
+            const bool input_idle=!reading && !stable_keys &&
+                (!last_button_held.load() || now-last_button_held.load()>=200);
+            if (input_idle && now-last_wire_log>=1000) {
+                last_wire_log=now;
+                for(auto& call:wire_calls) {
+                    const u64 count=call.count.load();if(count==call.reported)continue;
+                    char text[144];util::SNPrintf(text,sizeof(text),"audctl wire: cmd=%u calls=%llu words=%u a=%08X b=%08X",
+                        call.command.load(),static_cast<unsigned long long>(count),call.words.load(),call.first.load(),call.second.load());
+                    Log(text);call.reported=count;
+                }
+            }
+            if (input_idle && now-last_ui_log>=1000 && ui_calls.load()!=logged_calls) {
+                logged_calls=ui_calls.load();last_ui_log=now;
+                char report[280];
+                util::SNPrintf(report,sizeof(report),"volume UI: calls=%llu served=%llu child=%llu clients=%u am=%u reads=%llu writes=%llu step=%u last=%u target=%u value=%d echoes=%llu hud=%llu/%llu",
+                    static_cast<unsigned long long>(logged_calls),static_cast<unsigned long long>(ui_served.load()),
+                    static_cast<unsigned long long>(ui_children.load()),ui_clients.load(),am_clients.load(),
+                    static_cast<unsigned long long>(ui_reads.load()),static_cast<unsigned long long>(ui_writes.load()),
+                    ryz::rumble::VolumeGainStep(level.load(),target_level.load()),ui_command.load(),ui_target.load(),ui_value.load(),
+                    static_cast<unsigned long long>(ui_button_echoes.load()),static_cast<unsigned long long>(hud_patched.load()),static_cast<unsigned long long>(hud_received.load()));
+                Log(report);
+            }
+            if(input_idle && now-last_state_log>=5000) {
+                last_state_log=now;
+                char text[160];util::SNPrintf(text,sizeof(text),"volume state: active=%u haptics=%u requested=%u pid=%llu output=%u gain=%u keys=%u error=%08X",
+                    active?1u:0u,Enabled()?1u:0u,requested.load()?1u:0u,static_cast<unsigned long long>(pid),
+                    static_cast<u32>(output),level.load(),keys.load(),error.load());
+                Log(text);
             }
             if (dirty && stable_keys==0 && now-last_change>=500) {
                 char text[64]; util::SNPrintf(text,sizeof(text),"gain=%u\n",wanted);
@@ -303,6 +333,18 @@ void Main(void*) {
 }
 }
 void SetVolumeButtonsEnabled(bool value) { requested.store(value); }
+void ObserveOverlayVolume(bool patched) {
+    hud_received.fetch_add(1);if(patched)hud_patched.fetch_add(1);ui_calls.fetch_add(1);
+}
+void ObserveAudctlWire(unsigned int command,unsigned int words,unsigned int first,unsigned int second) {
+    for(auto& call:wire_calls) {
+        u32 key=call.command.load();
+        if(key!=command && key!=UINT32_MAX)continue;
+        if(key==UINT32_MAX)call.command.store(command);
+        call.words.store(words);call.first.store(first);call.second.store(second);call.count.fetch_add(1);
+        return;
+    }
+}
 void OpenVolumeUiSession(bool am) { ui_clients.fetch_add(1);if(am)am_clients.fetch_add(1); }
 void CloseVolumeUiSession(bool am) { ui_clients.fetch_sub(1);if(am)am_clients.fetch_sub(1); }
 void SetVolumeUiResult(unsigned int value) {ui_registration.store(value);}
