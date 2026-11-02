@@ -1,5 +1,6 @@
 #include "runtime.hpp"
 #include "config_value.hpp"
+#include "speaker_response.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -13,6 +14,7 @@ std::mutex state_mutex, log_mutex;
 ryz::rumble::State state;
 std::atomic<bool> lite{false}, enabled{true};
 std::atomic<unsigned> gain_percent{200}, watchdog_ms{1000};
+std::atomic<bool> boost_weak_signals{true};
 std::atomic<u64> commands{0}, last_program{0};
 std::atomic<u64> seen_commands{0}, seen_program{0};
 std::atomic<u32> seen_handle{0};
@@ -20,6 +22,8 @@ std::atomic<u32> probe_count{0}, last_probe_result{0};
 std::atomic<u64> session_program{0};
 std::atomic<u64> client_queries{0}, client_accepted{0}, queried_program{0};
 std::atomic<u64> signal_program{0}, nonzero_updates{0}, zero_updates{0};
+std::atomic<u64> handheld_nonzero{0}, pad_nonzero{0};
+std::atomic<u32> last_nonzero_handle{0};
 std::atomic<u32> input_peak{0}, pcm_peak{0};
 std::atomic<u32> last_audio_error{0}, mitm_result{0xFFFFFFFFu};
 std::atomic<bool> audio_started{false}, thread_started{false};
@@ -59,6 +63,7 @@ void ReloadConfig() {
         on = ryz::rumble::ConfigNumber(text, "rumble", "enabled", 1) != 0;
         volume_buttons = ryz::rumble::ConfigNumber(text, "rumble", "game_volume_buttons", 1) != 0;
         gain_percent.store(std::min(ryz::rumble::ConfigNumber(text, "rumble", "gain_percent", 200), 400u));
+        boost_weak_signals.store(ryz::rumble::ConfigNumber(text, "rumble", "boost_weak_signals", 1) != 0);
         const unsigned timeout = ryz::rumble::ConfigNumber(text, "rumble", "watchdog_ms", 1000);
         watchdog_ms.store(timeout ? std::clamp(timeout, 100u, 10000u) : 0);
     }
@@ -72,7 +77,8 @@ void ReloadConfig() {
 ryz::rumble::Levels Snapshot() {
     if (!Enabled()) return {};
     std::scoped_lock lock(state_mutex);
-    return state.Snapshot(Now(), watchdog_ms.load(), gain_percent.load() / 100.f);
+    return ryz::rumble::SpeakerResponse(
+        state.Snapshot(Now(), watchdog_ms.load(), gain_percent.load() / 100.f), boost_weak_signals.load());
 }
 
 void ReportCommands(u64 now) {
@@ -90,12 +96,15 @@ void ReportCommands(u64 now) {
     const u64 count = commands.load();
     const u64 seen = seen_commands.load();
     if ((count != previous_count || seen != previous_seen) && now - reported >= 1000) {
-        char text[192];
-        std::snprintf(text, sizeof(text), "seen=%llu accepted=%llu game=%016llX handle=%08X on=%u nz=%llu zero=%llu amp=%u/1000 pcm=%u",
+        char text[320];
+        std::snprintf(text, sizeof(text), "seen=%llu accepted=%llu game=%016llX handle=%08X on=%u nz=%llu zero=%llu amp=%u/1000 pcm=%u audio=%u err=%08X boost=%u hh=%llu pad=%llu nz_handle=%08X",
             static_cast<unsigned long long>(seen), static_cast<unsigned long long>(count),
             static_cast<unsigned long long>(seen_program.load()), seen_handle.load(), Enabled() ? 1u : 0u,
             static_cast<unsigned long long>(nonzero_updates.load()), static_cast<unsigned long long>(zero_updates.load()),
-            input_peak.load(), pcm_peak.load());
+            input_peak.load(), pcm_peak.load(), audio_started.load() ? 1u : 0u,
+            last_audio_error.load(), boost_weak_signals.load() ? 1u : 0u,
+            static_cast<unsigned long long>(handheld_nonzero.load()),
+            static_cast<unsigned long long>(pad_nonzero.load()), last_nonzero_handle.load());
         Log(text); previous_count = count; previous_seen = seen; reported = now;
     }
 }
@@ -131,6 +140,7 @@ void ReportCommands(u64 now) {
     ::Result rc = audoutStartAudioOut();
     if (R_FAILED(rc)) return rc;
     audio_started.store(true);
+    last_audio_error.store(0);
     Log("audio started: fixed 225 Hz, strength 1000, antiphase");
     u64 idle_since = 0, checked = Now();
     while (true) {
@@ -176,7 +186,7 @@ void AudioMain(void*) {
 
 void Log(const char* message, u32 result) {
     std::scoped_lock lock(log_mutex);
-    char line[192];
+    char line[384];
     const int length = std::snprintf(line, sizeof(line), "%llu %s: %08X\n",
         static_cast<unsigned long long>(Now()), message, result);
     AMS_UNUSED(fs::CreateFile(LogPath, 0));
@@ -210,7 +220,7 @@ ryz::rumble::DebugStatus GetDebugStatus() {
     return {seen_commands.load(), commands.load(), seen_program.load(), session_program.load(),
         seen_handle.load(), (IsLite() ? 1u : 0u) | (Enabled() ? 2u : 0u) |
         (audio_started.load() ? 4u : 0u) | (thread_started.load() ? 8u : 0u),
-        last_audio_error.load(), mitm_result.load(), active_clients.load(), 19, {probe_count.load(),last_probe_result.load()}};
+        last_audio_error.load(), mitm_result.load(), active_clients.load(), 20, {probe_count.load(),last_probe_result.load()}};
 }
 void Initialize() {
     AMS_UNUSED(fs::CreateDirectory("sdmc:/config"));
@@ -259,10 +269,15 @@ bool Publish(u64 process, u64 program, const u32* handles, const ryz::rumble::Va
     if (signal_program.load() != program) {
         signal_program.store(program); nonzero_updates.store(0); zero_updates.store(0);
         input_peak.store(0); pcm_peak.store(0);
+        handheld_nonzero.store(0); pad_nonzero.store(0); last_nonzero_handle.store(0);
     }
     for (size_t i=0;i<count;++i) if (ryz::rumble::IsRenderable(handles[i])) {
         const float amplitude = std::max(values[i].amp_low, values[i].amp_high);
-        if (amplitude > 0) nonzero_updates.fetch_add(1); else zero_updates.fetch_add(1);
+        if (amplitude > 0) {
+            nonzero_updates.fetch_add(1); last_nonzero_handle.store(handles[i]);
+            if (ryz::rumble::IsVirtual(handles[i])) handheld_nonzero.fetch_add(1);
+            else pad_nonzero.fetch_add(1);
+        } else zero_updates.fetch_add(1);
         RaisePeak(input_peak, static_cast<u32>(std::lround(amplitude * 1000.f)));
     }
     last_program.store(program); commands.fetch_add(1);

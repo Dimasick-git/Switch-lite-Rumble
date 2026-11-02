@@ -11,6 +11,8 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--base', type=Path, required=True, help='Full SD kit with Ryzhand and RyazhTune')
 parser.add_argument('--output', type=Path, default=root / 'dist')
+parser.add_argument('--version', default='beta-0.19.0')
+parser.add_argument('--notes', type=Path)
 args = parser.parse_args()
 base = args.base.resolve()
 assert base.is_dir(), base
@@ -29,7 +31,7 @@ files[tid + 'mitm.lst'] = b'audctl\novln:rcv\n'
 files['switch/ryz-rumble-test/ryz-rumble-test.nro'] = (root / 'test-app/ryz-rumble-test.nro').read_bytes()
 files['config/ryz-lite-rumble/config.ini'] = (root / 'config/config.ini').read_bytes()
 files['config/ryz-lite-rumble/LICENSE'] = (root / 'LICENSE').read_bytes()
-files['README-RU.txt'] = (root / 'docs/releases/beta-0.19.0.md').read_bytes()
+files['README-RU.txt'] = (args.notes or root / 'docs/releases' / (args.version + '.md')).read_bytes()
 for name in ('switch/.overlays/ovlmenu.ovl', 'switch/.overlays/RyazhTune-Overlay.ovl',
              'atmosphere/contents/0100000000000ED1/exefs.nsp',
              'atmosphere/contents/420000000000000E/exefs.nsp',
@@ -38,7 +40,7 @@ for name in ('switch/.overlays/ovlmenu.ovl', 'switch/.overlays/RyazhTune-Overlay
     assert files.get(name), f'Missing companion file: {name}'
 subprocess.run(['git', '-C', str(root), 'diff', '--quiet', 'HEAD'], check=True)
 commit = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
-metadata = {'release': 'beta-0.19.0', 'source_commit': commit,
+metadata = {'release': args.version, 'source_commit': commit,
             'ryzhand_reference_commit': subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD:Ryzhand'], text=True).strip(),
             'companions_reused_from_base_kit': True,
             'ryzhand_sha256': hashlib.sha256(files['switch/.overlays/ovlmenu.ovl']).hexdigest(),

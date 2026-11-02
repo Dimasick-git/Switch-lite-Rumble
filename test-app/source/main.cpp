@@ -22,7 +22,7 @@ int main(int, char**) {
     mkdir("sdmc:/config/ryz-lite-rumble", 0777);
     // One report per launch; no per-frame SD writes.
     if (FILE* file = std::fopen(TestLog, "w")) std::fclose(file);
-    trace("test-client 0.19.0 launched", 0);
+    trace("test-client 0.20.0 launched", 0);
     u64 module_pid = 0, host_program = 0;
     Result module_rc = pmdmntInitialize();
     if (R_SUCCEEDED(module_rc)) {
@@ -164,7 +164,7 @@ int main(int, char**) {
             }
             checked = armGetSystemTick();
         }
-        std::printf("\x1b[2J\x1b[HRyz Lite rumble 0.19.0: real HID IPC test\n\n"
+        std::printf("\x1b[2J\x1b[HRyz Lite rumble 0.20.0: real HID IPC test\n\n"
             "Module lookup: %08X PID=%llu\n"
             "Host program: %016llX\n"
             "Fresh SM HID: %08X | Y: %s\n"
