@@ -27,12 +27,16 @@ std::atomic<u32> last_nonzero_handle{0};
 std::atomic<u32> input_peak{0}, pcm_peak{0};
 std::atomic<u32> last_audio_error{0}, mitm_result{0xFFFFFFFFu};
 std::atomic<bool> audio_started{false}, thread_started{false};
+std::atomic<u64> submitted_frames{0}, played_frames{0}, slow_refills{0};
+std::atomic<u32> stream_gain{UINT32_MAX}, process_gain{UINT32_MAX}, first_process_gain{UINT32_MAX};
+std::atomic<u32> process_result{UINT32_MAX}, max_refill_ms{0}, wait_timeouts{0};
 std::atomic<unsigned> active_clients{0};
 struct Client { u64 process = 0; unsigned references = 0; } clients[16];
 os::ThreadType audio_thread;
 alignas(os::MemoryPageSize) u8 audio_stack[0x8000];
-alignas(0x1000) s16 samples[2][2048];
-AudioOutBuffer buffers[2]{};
+constexpr unsigned BufferCount = 3;
+alignas(0x1000) s16 samples[BufferCount][2048];
+AudioOutBuffer buffers[BufferCount]{};
 constexpr unsigned Frames = 480;
 
 u64 Now() { return armTicksToNs(armGetSystemTick()) / 1'000'000ULL; }
@@ -74,11 +78,12 @@ void ReloadConfig() {
     SetVolumeButtonsEnabled(volume_buttons);
     if (!on) { std::scoped_lock lock(state_mutex); state.Clear(); }
 }
-ryz::rumble::Levels Snapshot() {
+ryz::rumble::Levels Snapshot(bool render = false) {
     if (!Enabled()) return {};
     std::scoped_lock lock(state_mutex);
     return ryz::rumble::SpeakerResponse(
-        state.Snapshot(Now(), watchdog_ms.load(), gain_percent.load() / 100.f), boost_weak_signals.load());
+        render ? state.RenderSnapshot(Now(), watchdog_ms.load(), gain_percent.load() / 100.f) :
+                 state.Snapshot(Now(), watchdog_ms.load(), gain_percent.load() / 100.f), boost_weak_signals.load());
 }
 
 void ReportCommands(u64 now) {
@@ -91,7 +96,7 @@ void ReportCommands(u64 now) {
             static_cast<unsigned long long>(queried_program.load()));
         Log(text); previous_queries = queries; client_reported = now;
     }
-    // AudioMain and PlayAudio execute on the same audio thread.
+    // Only MaintainRuntime on the control worker writes these reports.
     static u64 reported = 0, previous_count = 0, previous_seen = 0;
     const u64 count = commands.load();
     const u64 seen = seen_commands.load();
@@ -120,6 +125,14 @@ void ReportCommands(u64 now) {
     // belongs to our sysmodule PID and retains its own unity gain.
     const ::Result volume_rc = audoutSetAudioOutVolume(1.f);
     if (R_FAILED(volume_rc)) { audoutExit(); return volume_rc; }
+    float actual = 0;
+    const ::Result read_rc = audoutGetAudioOutVolume(&actual);
+    stream_gain.store(R_SUCCEEDED(read_rc) && std::isfinite(actual) && actual >= 0 && actual <= 4 ?
+        static_cast<u32>(std::lround(actual * 1000)) : UINT32_MAX);
+    first_process_gain.store(UINT32_MAX);
+    process_gain.store(UINT32_MAX); process_result.store(UINT32_MAX);
+    submitted_frames.store(0); played_frames.store(0); slow_refills.store(0);
+    max_refill_ms.store(0); wait_timeouts.store(0);
     return 0;
 }
 ::Result PlayAudio() {
@@ -127,26 +140,25 @@ void ReportCommands(u64 now) {
     if (R_FAILED(opened)) return opened;
     auto cleanup = SCOPE_GUARD { audio_started.store(false); audoutStopAudioOut(); audoutExit(); };
     ryz::rumble::Synth synth;
-    for (unsigned i = 0; i < 2; ++i) {
+    for (unsigned i = 0; i < BufferCount; ++i) {
         buffers[i] = {};
         buffers[i].buffer = samples[i];
         buffers[i].buffer_size = sizeof(samples[i]);
         buffers[i].data_size = Frames * 2 * sizeof(s16);
-        synth.Render(samples[i], Frames, Snapshot(), 1000);
+        synth.Render(samples[i], Frames, Snapshot(true), 1000);
         MeasurePcm(samples[i], Frames * 2);
+        armDCacheFlush(samples[i], buffers[i].data_size);
         const ::Result rc = audoutAppendAudioOutBuffer(&buffers[i]);
         if (R_FAILED(rc)) return rc;
+        submitted_frames.fetch_add(Frames);
     }
     ::Result rc = audoutStartAudioOut();
     if (R_FAILED(rc)) return rc;
     audio_started.store(true);
     last_audio_error.store(0);
-    Log("audio started: fixed 225 Hz, strength 1000, antiphase");
-    u64 idle_since = 0, checked = Now();
+    u64 idle_since = 0, last_refill = Now(), last_probe = last_refill;
     while (true) {
         const u64 now = Now();
-        if (now - checked >= 1000) { ReloadConfig(); checked = now; }
-        ReportCommands(now);
         const auto levels = Snapshot();
         if (levels.left == 0 && levels.right == 0 && (!Enabled() || active_clients.load() == 0)) {
             if (!idle_since) idle_since = now;
@@ -154,24 +166,34 @@ void ReportCommands(u64 now) {
         } else { idle_since = 0; }
         AudioOutBuffer* buffer = nullptr; u32 released = 0;
         rc = audoutWaitPlayFinish(&buffer, &released, 50'000'000ULL);
-        if (R_VALUE(rc) == KERNELRESULT(TimedOut)) continue;
+        if (R_VALUE(rc) == KERNELRESULT(TimedOut)) { wait_timeouts.fetch_add(1); continue; }
         if (R_FAILED(rc)) return rc;
         if (!released) continue;
-        if (buffer != &buffers[0] && buffer != &buffers[1])
+        bool ours = false;
+        for (auto& candidate : buffers) if (buffer == &candidate) ours = true;
+        if (!ours)
             return MAKERESULT(Module_Libnx, LibnxError_BadInput);
-        synth.Render(static_cast<s16*>(buffer->buffer), Frames, Snapshot(), 1000);
+        synth.Render(static_cast<s16*>(buffer->buffer), Frames, Snapshot(true), 1000);
         MeasurePcm(static_cast<const s16*>(buffer->buffer), Frames * 2);
+        armDCacheFlush(buffer->buffer, buffer->data_size);
         rc = audoutAppendAudioOutBuffer(buffer);
         if (R_FAILED(rc)) return rc;
+        submitted_frames.fetch_add(Frames);
+        const u64 refill = Now();
+        const u64 gap = refill - last_refill;
+        RaisePeak(max_refill_ms, static_cast<u32>(std::min<u64>(gap, UINT32_MAX)));
+        if (gap > BufferCount * 10) slow_refills.fetch_add(1);
+        last_refill = refill;
+        if (refill - last_probe >= 1000) {
+            u64 count = 0;
+            if (R_SUCCEEDED(audoutGetAudioOutPlayedSampleCount(&count))) played_frames.store(count);
+            last_probe = refill;
+        }
     }
 }
 void AudioMain(void*) {
     Log("audio thread entered");
-    u64 checked = 0;
     while (true) {
-        const u64 now = Now();
-        if (now - checked >= 1000) { ReloadConfig(); checked = now; }
-        ReportCommands(now);
         const auto levels = Snapshot();
         // Prime at game HID connection time, before its first vibration. A
         // cold audio open can otherwise swallow short on/stop command pairs.
@@ -182,6 +204,56 @@ void AudioMain(void*) {
         } else { os::SleepThread(TimeSpan::FromMilliSeconds(10)); }
     }
 }
+}
+
+void MaintainRuntime() {
+    // Called only by the existing volume/control worker. SD I/O and
+    // per-process mixer requests must not starve the PCM refill deadline.
+    static u64 checked = 0, reported = 0;
+    static bool was_started = false;
+    const u64 now = Now();
+    if (now - checked < 1000) return;
+    checked = now;
+    ReloadConfig();
+    const bool started = audio_started.load();
+    if (started) {
+        ::Result rc = audaInitialize();
+        if (R_SUCCEEDED(rc)) {
+            u64 pid = 0;
+            rc = svcGetProcessId(&pid, CUR_PROCESS_HANDLE);
+            float gain = 0;
+            if (R_SUCCEEDED(rc)) rc = audaGetAudioOutputProcessMasterVolume(pid, &gain);
+            if (R_SUCCEEDED(rc) && (!std::isfinite(gain) || gain < 0 || gain > 4))
+                rc = MAKERESULT(Module_Libnx, LibnxError_BadInput);
+            if (R_SUCCEEDED(rc)) {
+                u32 unknown = UINT32_MAX;
+                first_process_gain.compare_exchange_strong(unknown, static_cast<u32>(std::lround(gain * 1000)));
+                // Only our own haptic process, never the game or audio input.
+                if (Enabled() && std::fabs(gain - 1.f) > .001f)
+                    rc = audaSetAudioOutputProcessMasterVolume(pid, 0, 1.f);
+                if (R_SUCCEEDED(rc)) rc = audaGetAudioOutputProcessMasterVolume(pid, &gain);
+                if (R_SUCCEEDED(rc)) {
+                    if (std::isfinite(gain) && gain >= 0 && gain <= 4)
+                        process_gain.store(static_cast<u32>(std::lround(gain * 1000)));
+                    else rc = MAKERESULT(Module_Libnx, LibnxError_BadInput);
+                }
+            }
+            audaExit();
+        }
+        process_result.store(rc);
+    }
+    if (started && !was_started) Log("audio started: fixed 225 Hz, strength 1000, antiphase; 30 ms queue");
+    was_started = started;
+    ReportCommands(now);
+    if (started && now - reported >= 5000) {
+        reported = now;
+        char text[240];
+        std::snprintf(text, sizeof(text), "audio transport: sent=%llu played=%llu slow=%llu gap=%u timeouts=%u stream=%u process=%u first=%u process_rc=%08X",
+            static_cast<unsigned long long>(submitted_frames.load()), static_cast<unsigned long long>(played_frames.load()),
+            static_cast<unsigned long long>(slow_refills.load()), max_refill_ms.load(), wait_timeouts.load(),
+            stream_gain.load(), process_gain.load(), first_process_gain.load(), process_result.load());
+        Log(text);
+    }
 }
 
 void Log(const char* message, u32 result) {
@@ -220,7 +292,11 @@ ryz::rumble::DebugStatus GetDebugStatus() {
     return {seen_commands.load(), commands.load(), seen_program.load(), session_program.load(),
         seen_handle.load(), (IsLite() ? 1u : 0u) | (Enabled() ? 2u : 0u) |
         (audio_started.load() ? 4u : 0u) | (thread_started.load() ? 8u : 0u),
-        last_audio_error.load(), mitm_result.load(), active_clients.load(), 20, {probe_count.load(),last_probe_result.load()}};
+        last_audio_error.load(), mitm_result.load(), active_clients.load(), 21, {probe_count.load(),last_probe_result.load()}};
+}
+ryz::rumble::AudioTransportStatus GetAudioTransportStatus() {
+    return {submitted_frames.load(), played_frames.load(), slow_refills.load(), stream_gain.load(),
+        process_gain.load(), first_process_gain.load(), process_result.load(), max_refill_ms.load(), wait_timeouts.load()};
 }
 void Initialize() {
     AMS_UNUSED(fs::CreateDirectory("sdmc:/config"));
@@ -230,6 +306,7 @@ void Initialize() {
     setsysExit();
     lite.store(R_SUCCEEDED(rc) && model == SetSysProductModel_Hoag);
     Log("module starting", rc);
+    Log("module version", 21);
     Log("product model", static_cast<u32>(model));
     Log("loading configuration");
     ReloadConfig();

@@ -43,6 +43,8 @@ class State {
     std::uint64_t owner = 0;
     std::array<Value,Slots> values{};
     std::array<std::uint64_t,Slots> updated{};
+    std::array<float,Slots> pending{};
+    std::array<std::uint64_t,Slots> pending_at{};
     static unsigned Slot(std::uint32_t handle) {
         if (!IsRenderable(handle)) return Slots;
         const unsigned player = (handle >> 8) & 0xff;
@@ -63,11 +65,18 @@ public:
         if (owner != process) { Clear(); owner = process; }
         for (std::size_t i = 0; i < count; ++i) {
             const unsigned slot = Slot(handles[i]);
-            if (slot < Slots) { values[slot] = input[i]; updated[slot] = now; }
+            if (slot < Slots) {
+                values[slot] = input[i]; updated[slot] = now;
+                const float amplitude = std::max(input[i].amp_low, input[i].amp_high);
+                if (amplitude > 0 && amplitude >= pending[slot]) {
+                    pending[slot] = amplitude;
+                    pending_at[slot] = now;
+                }
+            }
         }
         return true;
     }
-    void Clear() { owner = 0; values.fill(Value{}); updated.fill(0); }
+    void Clear() { owner = 0; values.fill(Value{}); updated.fill(0); pending.fill(0); pending_at.fill(0); }
     void StopOwner(std::uint64_t process) { if (owner == process) Clear(); }
     Value Actual(std::uint64_t process, std::uint32_t handle) const {
         const unsigned slot = Slot(handle);
@@ -85,6 +94,19 @@ public:
                 *channels[i % 2] = std::max(*channels[i % 2], level);
             }
         }
+        return out;
+    }
+    // Consume only when filling an audio block. A short on/stop pair between
+    // two fills must still reach one block, while Actual remains the latest
+    // HID value. Pending peaks expire and are never replayed a second time.
+    Levels RenderSnapshot(std::uint64_t now, unsigned watchdog_ms, float gain) {
+        Levels out = Snapshot(now, watchdog_ms, gain);
+        float* channels[] = {&out.left, &out.right};
+        for (unsigned i = 0; i < Slots; ++i) {
+            if (now >= pending_at[i] && (!watchdog_ms || now - pending_at[i] <= watchdog_ms))
+                *channels[i % 2] = std::max(*channels[i % 2], std::clamp(gain * pending[i], 0.f, 1.f));
+        }
+        pending.fill(0);
         return out;
     }
 };

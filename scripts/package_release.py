@@ -11,7 +11,7 @@ root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--base', type=Path, required=True, help='Full SD kit with Ryzhand and RyazhTune')
 parser.add_argument('--output', type=Path, default=root / 'dist')
-parser.add_argument('--version', default='beta-0.19.0')
+parser.add_argument('--version', default='beta-0.21.0')
 parser.add_argument('--notes', type=Path)
 args = parser.parse_args()
 base = args.base.resolve()
@@ -58,5 +58,18 @@ with zipfile.ZipFile(archive) as output:
         assert output.read(name) == data, name
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 (args.output / 'SHA256SUMS.txt').write_text(f'{digest}  sdout.zip\n', encoding='ascii')
+update = args.output / 'module-update.zip'
+update_files = {name: data for name, data in files.items() if name.startswith(tid) or
+                name.startswith('switch/ryz-rumble-test/') or name in {'README-RU.txt', 'BUILD-INFO.json'}}
+with zipfile.ZipFile(update, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as output:
+    for name, data in sorted(update_files.items()):
+        output.writestr(name, data)
+with zipfile.ZipFile(update) as output:
+    assert output.testzip() is None
+    assert set(output.namelist()) == update_files.keys()
+    for name, data in update_files.items():
+        assert output.read(name) == data, name
+update_digest = hashlib.sha256(update.read_bytes()).hexdigest()
+(args.output / 'SHA256SUMS.txt').write_text(f'{digest}  sdout.zip\n{update_digest}  module-update.zip\n', encoding='ascii')
 print(json.dumps({'archive': str(archive), 'files': len(files), 'bytes': archive.stat().st_size,
-                  'sha256': digest, **metadata}, indent=2))
+                  'sha256': digest, 'update_archive': str(update), 'update_sha256': update_digest, **metadata}, indent=2))

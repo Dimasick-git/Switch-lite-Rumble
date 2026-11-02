@@ -116,6 +116,7 @@ void Main(void*) {
     { char text[64]; u32 stored=0; if (Read(LevelFile,text,sizeof(text)) && ryz::rumble::ParseCheckpointUInt(text,"gain",10,stored) && stored<=1000) { wanted=stored; have_level=true; } else wanted=1000; }
     level.store(wanted);
     for (;;) {
+        MaintainRuntime();
         ::Result rc=audctlInitialize();
         if (R_FAILED(rc)) { Fail(rc,"volume buttons: audctl unavailable"); os::SleepThread(TimeSpan::FromSeconds(2)); continue; }
         auto close_control=SCOPE_GUARD { audctlExit(); };
@@ -287,6 +288,7 @@ void Main(void*) {
             }
             const bool input_idle=!reading && !stable_keys &&
                 (!last_button_held.load() || now-last_button_held.load()>=200);
+            if (input_idle) MaintainRuntime();
             if (input_idle && now-last_wire_log>=1000) {
                 last_wire_log=now;
                 for(auto& call:wire_calls) {

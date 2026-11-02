@@ -21,7 +21,8 @@ AMS_SF_DEFINE_MITM_INTERFACE(ams::ryzrumble::ipc, IHid, RYZ_HID_METHODS, 0x52595
  AMS_SF_METHOD_INFO(C,H,1,Result,GetClients,(sf::Out<ryz::rumble::ClientStatus> out),(out)) \
  AMS_SF_METHOD_INFO(C,H,2,Result,GetSignal,(sf::Out<ryz::rumble::SignalStatus> out),(out)) \
  AMS_SF_METHOD_INFO(C,H,3,Result,GetVolume,(sf::Out<ryz::rumble::VolumeStatus> out),(out)) \
- AMS_SF_METHOD_INFO(C,H,4,Result,GetVolumeUi,(sf::Out<ryz::rumble::VolumeUiStatus> out),(out))
+ AMS_SF_METHOD_INFO(C,H,4,Result,GetVolumeUi,(sf::Out<ryz::rumble::VolumeUiStatus> out),(out)) \
+ AMS_SF_METHOD_INFO(C,H,5,Result,GetAudioTransport,(sf::Out<ryz::rumble::AudioTransportStatus> out),(out))
 AMS_SF_DEFINE_INTERFACE(ams::ryzrumble::ipc, IStatus, RYZ_STATUS_METHODS, 0x52595A53)
 
 namespace ams::ryzrumble {
@@ -32,6 +33,7 @@ public:
     Result GetSignal(sf::Out<ryz::rumble::SignalStatus> out) { out.SetValue(GetSignalStatus()); R_SUCCEED(); }
     Result GetVolume(sf::Out<ryz::rumble::VolumeStatus> out) { out.SetValue(GetVolumeStatus()); R_SUCCEED(); }
     Result GetVolumeUi(sf::Out<ryz::rumble::VolumeUiStatus> out) { out.SetValue(GetVolumeUiStatus()); R_SUCCEED(); }
+    Result GetAudioTransport(sf::Out<ryz::rumble::AudioTransportStatus> out) { out.SetValue(GetAudioTransportStatus()); R_SUCCEED(); }
 };
 class ActiveList {
     std::shared_ptr<::Service> forward;

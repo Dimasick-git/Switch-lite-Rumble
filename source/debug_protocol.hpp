@@ -1,6 +1,12 @@
 #pragma once
 #include <cstdint>
 namespace ryz::rumble {
+struct AudioTransportStatus {
+    std::uint64_t submitted_frames, played_frames, slow_refills;
+    std::uint32_t stream_gain, process_gain, first_process_gain, process_result;
+    std::uint32_t max_refill_ms, wait_timeouts;
+};
+static_assert(sizeof(AudioTransportStatus) == 48);
 struct DebugStatus {
     std::uint64_t seen, rendered, command_game, session_game;
     std::uint32_t handle, flags, audio_error, mitm_result;

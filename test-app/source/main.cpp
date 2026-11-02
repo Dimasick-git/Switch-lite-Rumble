@@ -22,7 +22,7 @@ int main(int, char**) {
     mkdir("sdmc:/config/ryz-lite-rumble", 0777);
     // One report per launch; no per-frame SD writes.
     if (FILE* file = std::fopen(TestLog, "w")) std::fclose(file);
-    trace("test-client 0.20.0 launched", 0);
+    trace("test-client 0.21.0 launched", 0);
     u64 module_pid = 0, host_program = 0;
     Result module_rc = pmdmntInitialize();
     if (R_SUCCEEDED(module_rc)) {
@@ -81,6 +81,8 @@ int main(int, char**) {
     ryz::rumble::SignalStatus signal{};
     ryz::rumble::VolumeStatus volume{};
     ryz::rumble::VolumeUiStatus ui{};
+    ryz::rumble::AudioTransportStatus transport{};
+    Result transport_rc=status_rc;
     Result ui_rc=status_rc;
     Result volume_rc=status_rc;
     Result clients_rc = serviceIsActive(&status_service) ? serviceDispatchOut(&status_service, 1, clients) : status_rc;
@@ -122,16 +124,16 @@ int main(int, char**) {
             device_mode = (device_mode + 1) % 3;
             initialize_devices(); last = initialized;
         }
-        if (keys & (HidNpadButton_A | HidNpadButton_X | HidNpadButton_L | HidNpadButton_R)) {
+        if (keys & (HidNpadButton_A | HidNpadButton_X | HidNpadButton_L | HidNpadButton_R | HidNpadButton_ZL)) {
             values[0] = (keys & HidNpadButton_R) ? off : on;
             values[1] = (keys & HidNpadButton_L) ? off : on;
             if (keys & HidNpadButton_X) {
                 last = vibration.SendValue(handles[0], &values[0]);
                 if (R_SUCCEEDED(last)) last = vibration.SendValue(handles[1], &values[1]);
             } else { last = vibration.SendValues(handles, values, 2); }
-            trace((keys & HidNpadButton_X) ? "send-single-201" : "send-batch-206", last, static_cast<u32>(keys));
+            trace((keys & HidNpadButton_ZL) ? "short-30ms-206" : (keys & HidNpadButton_X) ? "send-single-201" : "send-batch-206", last, static_cast<u32>(keys));
             active = true;
-            stop_tick = armGetSystemTick() + armNsToTicks(500'000'000ULL);
+            stop_tick = armGetSystemTick() + armNsToTicks((keys & HidNpadButton_ZL) ? 30'000'000ULL : 500'000'000ULL);
         }
         if ((keys & HidNpadButton_B) || (active && armGetSystemTick() >= stop_tick)) {
             values[0] = values[1] = off;
@@ -145,6 +147,7 @@ int main(int, char**) {
             const Result signal_rc = serviceDispatchOut(&status_service, 2, signal);
             volume_rc = serviceDispatchOut(&status_service, 3, volume);
             ui_rc = serviceDispatchOut(&status_service, 4, ui);
+            transport_rc = serviceDispatchOut(&status_service, 5, transport);
             if (FILE* file = std::fopen(TestLog, "a")) {
                 std::fprintf(file, "snapshot status=%08X flags=%X sessions=%u seen=%llu published=%llu hook=%08X audio=%08X queries=%llu accepted=%llu query=%016llX session=%016llX\n",
                     status_rc, debug.flags, debug.clients,
@@ -160,11 +163,15 @@ int main(int, char**) {
                     volume_rc,volume.flags,static_cast<unsigned long long>(volume.program),volume.gain_permille,
                     volume.target_volume,volume.last_error,volume.key_mask,static_cast<unsigned long long>(volume.changes));
                 std::fprintf(file,"volume-ui rc=%08X reads=%llu writes=%llu clients=%u am=%u registration=%08X step=%u\n",ui_rc,static_cast<unsigned long long>(ui.reads),static_cast<unsigned long long>(ui.writes),ui.clients,ui.am_clients,ui.registration,ui.step);
+                std::fprintf(file,"transport rc=%08X sent=%llu played=%llu slow=%llu gap=%u timeouts=%u stream=%u process=%u first=%u process_rc=%08X\n", transport_rc,
+                    static_cast<unsigned long long>(transport.submitted_frames),static_cast<unsigned long long>(transport.played_frames),
+                    static_cast<unsigned long long>(transport.slow_refills),transport.max_refill_ms,transport.wait_timeouts,
+                    transport.stream_gain,transport.process_gain,transport.first_process_gain,transport.process_result);
                 std::fclose(file);
             }
             checked = armGetSystemTick();
         }
-        std::printf("\x1b[2J\x1b[HRyz Lite rumble 0.20.0: real HID IPC test\n\n"
+        std::printf("\x1b[2J\x1b[HRyz Lite rumble 0.21.0: real HID IPC test\n\n"
             "Module lookup: %08X PID=%llu\n"
             "Host program: %016llX\n"
             "Fresh SM HID: %08X | Y: %s\n"
@@ -178,12 +185,14 @@ int main(int, char**) {
             "Volume rc=%08X flags=%X Game=%u%% HW=%u\n"
             "Vol error=%08X keys=%u changes=%llu\n"
             "UI rc=%08X AM=%u step=%u reads=%llu writes=%llu\n"
+            "Audio transport rc=%08X stream=%u process=%u result=%08X\n"
+            "Played=%llu gap=%ums slow=%llu timeouts=%u\n"
             "SD report: %s\n"
             "Init: %08X\nInfo: %08X type=%u position=%u\n"
             "Mounted: %08X %s\nPermitted: %08X %s\n\n"
             "A: batch command 206, both sides, 500 ms\n"
             "X: single command 201, both sides, 500 ms\n"
-            "L/R: left/right only, 500 ms\nB: stop\nPLUS: exit\n\n"
+            "L/R: left/right only, 500 ms\nZL: short pulse, 30 ms\nB: stop\nPLUS: exit\n\n"
             "Last command result: %08X\nState: %s\n\n"
             "Client report: /config/ryz-lite-rumble/test-client.log\n"
             "Module log: /config/ryz-lite-rumble/runtime.log\n",
@@ -192,7 +201,10 @@ int main(int, char**) {
             status_rc, debug.flags, debug.mitm_result, debug.audio_error,
             static_cast<unsigned long long>(debug.seen), static_cast<unsigned long long>(debug.rendered),
             debug.handle, static_cast<unsigned long long>(debug.command_game), debug.reserved[0], debug.reserved[1], signal.input_peak_permille, signal.pcm_peak, static_cast<unsigned long long>(signal.nonzero), volume_rc, volume.flags, volume.gain_permille/10,
-            volume.target_volume, volume.last_error, volume.key_mask, static_cast<unsigned long long>(volume.changes), ui_rc,ui.am_clients,ui.step,static_cast<unsigned long long>(ui.reads),static_cast<unsigned long long>(ui.writes), report_saved ? "saved" : "WRITE FAILED",
+            volume.target_volume, volume.last_error, volume.key_mask, static_cast<unsigned long long>(volume.changes), ui_rc,ui.am_clients,ui.step,static_cast<unsigned long long>(ui.reads),static_cast<unsigned long long>(ui.writes),
+            transport_rc,transport.stream_gain,transport.process_gain,transport.process_result,
+            static_cast<unsigned long long>(transport.played_frames),transport.max_refill_ms,static_cast<unsigned long long>(transport.slow_refills),transport.wait_timeouts,
+            report_saved ? "saved" : "WRITE FAILED",
             initialized, info_rc, static_cast<unsigned>(info.type), static_cast<unsigned>(info.position),
             mounted_rc, mounted ? "yes" : "no", permitted_rc, permitted ? "yes" : "no", last, active ? "on" : "stopped");
         consoleUpdate(nullptr);
